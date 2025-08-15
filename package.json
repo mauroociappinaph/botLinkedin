@@ -33,6 +33,7 @@
     "@prisma/client": "^6.14.0",
     "prisma": "^6.14.0",
     "puppeteer": "^24.16.2",
+    "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "sqlite3": "^5.1.7"
   },
