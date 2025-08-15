@@ -1,0 +1,9 @@
+echo "🚀 Running pre-push checks..."
+
+# Run all tests including integration tests
+npm run test:coverage
+
+# Ensure build works
+npm run build
+
+echo "✅ Pre-push checks completed successfully!"
