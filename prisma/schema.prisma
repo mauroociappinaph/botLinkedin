@@ -20,6 +20,8 @@ model JobPosting {
   salary      String?
   appliedAt   DateTime?
   status      String   // 'found', 'applied', 'skipped', 'error'
+  isEasyApply Boolean  @default(true)
+  errorMessage String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -27,14 +29,14 @@ model JobPosting {
 }
 
 model ApplicationSession {
-  id            String   @id @default(cuid())
-  startedAt     DateTime @default(now())
-  endedAt       DateTime?
-  jobsFound     Int      @default(0)
-  jobsApplied   Int      @default(0)
-  jobsSkipped   Int      @default(0)
-  errors        Int      @default(0)
-  status        String   // 'running', 'completed', 'failed'
+  id                        String   @id @default(cuid())
+  startTime                 DateTime @default(now())
+  endTime                   DateTime?
+  totalJobsFound            Int      @default(0)
+  totalApplicationsSubmitted Int      @default(0)
+  totalSkipped              Int      @default(0)
+  totalErrors               Int      @default(0)
+  searchConfig              String   // JSON string of search configuration
 
   @@map("application_sessions")
 }

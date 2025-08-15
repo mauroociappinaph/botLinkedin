@@ -58,10 +58,10 @@ export enum FormFieldType {
 export interface JobSearchConfig {
   keywords: string[];
   location: string;
-  datePosted: DatePosted;
+  datePosted: 'past24h' | 'pastWeek' | 'pastMonth' | 'any';
   remoteWork: boolean;
-  experienceLevel: ExperienceLevel[];
-  jobType: JobType[];
+  experienceLevel: string[];
+  jobType: string[];
   salaryRange?: {
     min?: number;
     max?: number;
@@ -106,18 +106,18 @@ export interface JobPosting {
   company: string;
   location: string;
   url: string;
-  description?: string;
-  appliedAt?: Date;
-  status: JobStatus;
-  errorMessage?: string;
-  salary?: string;
+  description?: string | null;
+  appliedAt?: Date | null;
+  status: string;
+  errorMessage?: string | null;
+  salary?: string | null;
   isEasyApply: boolean;
 }
 
 export interface ApplicationSession {
   id: string;
   startTime: Date;
-  endTime?: Date;
+  endTime?: Date | null;
   totalJobsFound: number;
   totalApplicationsSubmitted: number;
   totalSkipped: number;
