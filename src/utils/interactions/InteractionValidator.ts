@@ -52,7 +52,7 @@ class DelayValidationRule implements ValidationRule<number> {
  * Comprehensive configuration validator
  */
 export class InteractionConfigValidator {
-    private rules: Map<string, ValidationRule<any>> = new Map([
+    private rules: Map<string, ValidationRule<unknown>> = new Map([
         ['retries', new RetryValidationRule()],
         ['timeout', new TimeoutValidationRule()],
         ['delay', new DelayValidationRule()],

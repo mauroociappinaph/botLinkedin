@@ -1,3 +1,5 @@
+
+
 /**
  * Custom error class for interaction failures
  */
@@ -50,13 +52,21 @@ export class InteractionError extends Error {
         };
 
         // Only include non-null/undefined values
-        if (this.selector) logContext.selector = this.selector;
-        if (this.attempts) logContext.attempts = this.attempts;
-        if (this.context) logContext.context = this.context;
-        if (this.stack) logContext.stack = this.stack;
+        if (this.selector) {
+            logContext['selector'] = this.selector;
+        }
+        if (this.attempts != null) {
+            logContext['attempts'] = this.attempts;
+        }
+        if (this.context) {
+            logContext['context'] = this.context;
+        }
+        if (this.stack) {
+            logContext['stack'] = this.stack;
+        }
 
         if (this.originalError) {
-            logContext.originalError = {
+            logContext['originalError'] = {
                 message: this.originalError.message,
                 name: this.originalError.name,
                 ...(this.originalError.stack && { stack: this.originalError.stack })
