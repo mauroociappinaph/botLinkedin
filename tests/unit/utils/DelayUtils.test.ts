@@ -155,7 +155,7 @@ describe('DelayUtils', () => {
             (mockPage.$ as jest.Mock).mockResolvedValueOnce(null);
 
             await expect(HumanLikeInteractions.moveMouseToElement(mockPage, '#missing')).rejects.toThrow(
-                'Element not found: #missing'
+                'Element not found failed for #missing'
             );
         });
 
@@ -165,7 +165,7 @@ describe('DelayUtils', () => {
             });
 
             await expect(HumanLikeInteractions.moveMouseToElement(mockPage, '#element')).rejects.toThrow(
-                'Could not get bounding box for element: #element'
+                'Could not get bounding box for element failed for #element'
             );
         });
     });

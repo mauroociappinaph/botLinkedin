@@ -6,18 +6,36 @@ export class InteractionError extends Error {
 
     constructor(
         public readonly operation: string,
-        public readonly selector?: string,
-        public readonly attempts?: number,
-        public readonly originalError?: Error,
-        public readonly context?: Record<string, unknown>
+        public readonly selector?: string | null,
+        public readonly attempts?: number | null,
+        public readonly originalError?: Error | null,
+        public readonly context?: Record<string, unknown> | null
     ) {
-        const message = `${operation} failed${selector ? ` for ${selector}` : ''}${attempts ? ` after ${attempts} attempts` : ''}`;
-        super(message);
-        this.name = 'InteractionError';
-        // Set cause property if originalError exists (ES2022 feature)
-        if (originalError && 'cause' in Error.prototype) {
-            (this as unknown).cause = originalError;
+        if (!operation?.trim()) {
+            throw new Error('Operation name is required and cannot be empty');
         }
+
+        if (attempts !== null && attempts !== undefined && attempts < 0) {
+            throw new Error('Attempts must be a non-negative number');
+        }
+
+        const selectorPart = selector ? ` for ${selector}` : '';
+        const attemptsPart = attempts ? ` after ${attempts} attempts` : '';
+        const message = `${operation} failed${selectorPart}${attemptsPart}`;
+
+        super(message);
+
+        // Set cause property if originalError exists
+        if (originalError) {
+            Object.defineProperty(this, 'cause', {
+                value: originalError,
+                writable: false,
+                enumerable: false,
+                configurable: true
+            });
+        }
+
+        this.name = 'InteractionError';
         this.timestamp = new Date();
     }
 
@@ -25,15 +43,27 @@ export class InteractionError extends Error {
      * Converts the error to a structured object for logging
      */
     public toLogContext(): Record<string, unknown> {
-        return {
+        const logContext: Record<string, unknown> = {
             operation: this.operation,
-            selector: this.selector,
-            attempts: this.attempts,
             timestamp: this.timestamp.toISOString(),
-            originalError: this.originalError?.message,
-            context: this.context,
-            stack: this.stack,
+            userMessage: this.getUserMessage(),
         };
+
+        // Only include non-null/undefined values
+        if (this.selector) logContext.selector = this.selector;
+        if (this.attempts) logContext.attempts = this.attempts;
+        if (this.context) logContext.context = this.context;
+        if (this.stack) logContext.stack = this.stack;
+
+        if (this.originalError) {
+            logContext.originalError = {
+                message: this.originalError.message,
+                name: this.originalError.name,
+                ...(this.originalError.stack && { stack: this.originalError.stack })
+            };
+        }
+
+        return logContext;
     }
 
     /**
@@ -47,5 +77,27 @@ export class InteractionError extends Error {
                         `performing ${this.operation} on`;
 
         return `Failed ${action}${this.selector ? ` element ${this.selector}` : ' page element'}. Please try again.`;
+    }
+
+    /**
+     * Factory method for timeout errors
+     */
+    public static timeout(operation: string, selector?: string, timeoutMs?: number): InteractionError {
+        const context = timeoutMs ? { timeoutMs } : undefined;
+        return new InteractionError(operation, selector, undefined, undefined, context);
+    }
+
+    /**
+     * Factory method for element not found errors
+     */
+    public static elementNotFound(selector: string): InteractionError {
+        return new InteractionError('element lookup', selector, undefined, undefined, { reason: 'not found' });
+    }
+
+    /**
+     * Factory method for retry exhaustion errors
+     */
+    public static retriesExhausted(operation: string, selector: string, attempts: number, lastError?: Error): InteractionError {
+        return new InteractionError(operation, selector, attempts, lastError, { reason: 'retries exhausted' });
     }
 }
