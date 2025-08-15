@@ -120,7 +120,7 @@ export class PerformanceMonitor {
   public async timeSelectorWait<T>(
     selector: string,
     operation: () => Promise<T>,
-    metadata?: Record<string, any>
+    metadata?: Record<string, unknown>
   ): Promise<T> {
     return this.timeOperation(`selector_wait_${selector}`, operation, {
       selector,
@@ -199,7 +199,7 @@ export class PerformanceMonitor {
    * Gets metrics by type
    */
   public getMetricsByType(type: string): PerformanceMetric[] {
-    return this.completedMetrics.filter((m) => m.metadata?.type === type);
+    return this.completedMetrics.filter((m) => m.metadata?.['type'] === type);
   }
 
   /**

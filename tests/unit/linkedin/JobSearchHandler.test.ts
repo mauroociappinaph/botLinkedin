@@ -364,57 +364,6 @@ describe('JobSearchHandler', () => {
         }, 10000);
     });
 
-    describe('extractJobFromCard', () => {
-        it('should extract job information correctly', async () => {
-            const mockJobCard = {
-                $: jest.fn()
-            };
-
-            // Mock job card elements
-            const mockTitleElement = {};
-            const mockCompanyElement = {};
-            const mockLocationElement = {};
-            const mockEasyApplyElement = {};
-
-            mockJobCard.$.mockImplementation((selector) => {
-                if (selector.includes('title')) return mockTitleElement;
-                if (selector.includes('company')) return mockCompanyElement;
-                if (selector.includes('location')) return mockLocationElement;
-                if (selector.includes('apply')) return mockEasyApplyElement;
-                return null;
-            });
-
-            // Mock page.evaluate calls
-            mockPage.evaluate
-                .mockResolvedValueOnce('Software Engineer') // title
-                .mockResolvedValueOnce('https://linkedin.com/jobs/view/123456') // url
-                .mockResolvedValueOnce('Tech Company') // company
-                .mockResolvedValueOnce('San Francisco, CA'); // location
-
-            const job = await (jobSearchHandler as unknown).extractJobFromCard(mockJobCard);
-
-            expect(job).toEqual({
-                id: '123456',
-                title: 'Software Engineer',
-                company: 'Tech Company',
-                location: 'San Francisco, CA',
-                url: 'https://linkedin.com/jobs/view/123456',
-                status: 'found',
-                isEasyApply: true,
-                appliedAt: null,
-                description: null,
-                salary: null,
-                errorMessage: null
-            });
-        });
-
-        it('should return null for jobs without Easy Apply', async () => {
-            const mockJobCard = {
-                $: jest.fn().mockResolvedValue(null) // No Easy Apply button
-            };
-
-            const job = await (jobSearchHandler as unknown).extractJobFromCard(mockJobCard);
-            expect(job).toBeNull();
-        });
-    });
+    // Note: Job parsing functionality has been moved to JobPostingParser
+    // See JobPostingParser.test.ts for job parsing tests
 });

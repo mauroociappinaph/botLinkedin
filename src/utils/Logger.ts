@@ -1,5 +1,7 @@
 import { LogLevel } from '../types';
 
+export { LogLevel };
+
 /**
  * Log formatting options
  */

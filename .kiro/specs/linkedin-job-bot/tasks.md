@@ -71,7 +71,7 @@
   - Add validation for search parameters
   - _Requirements: 2.1, 2.2, 2.4_
 
-- [ ] 7.2 Create job posting parser
+- [x] 7.2 Create job posting parser
   - Extract job details: ID, title, company, location, URL
   - Identify "Easy Apply" buttons and skip external applications
   - Parse job descriptions and salary information when available

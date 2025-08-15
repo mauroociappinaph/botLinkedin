@@ -1,5 +1,10 @@
 import { Page } from 'puppeteer';
 import {
+  ExtractionError,
+  NavigationError,
+  SearchError,
+} from '../errors/LinkedInErrors';
+import {
   JobPosting,
   JobSearchConfig,
   LogLevel,
@@ -14,20 +19,34 @@ import {
   PerformanceReport,
 } from '../utils/PerformanceMonitor';
 import { RetryUtils } from '../utils/RetryUtils';
+import { JobPostingParser } from './JobPostingParser';
+import { JobSearchConfigValidator } from './JobSearchConfigValidator';
 import { LinkedInSelectors } from './LinkedInSelectors';
+
+// Error response codes for better type safety
+type ErrorCode =
+  | 'INVALID_SEARCH_CONFIG'
+  | 'NAVIGATION_FAILED'
+  | 'SEARCH_FAILED'
+  | 'EXTRACTION_FAILED'
+  | 'TIMEOUT_ERROR'
+  | 'AUTHENTICATION_ERROR';
 
 /**
  * Handles LinkedIn job search functionality including navigation, filtering, and job extraction
  * Implements Requirements 2.1, 2.2, 2.4
+ *
+ * Refactored for better maintainability, error handling, and performance monitoring
  */
 export class JobSearchHandler {
-  private page: Page;
-  private logger: Logger;
+  private readonly page: Page;
+  private readonly logger: Logger;
   private searchConfig: JobSearchConfig;
-  private performanceMonitor: PerformanceMonitor;
-  private circuitBreaker: CircuitBreaker;
+  private readonly performanceMonitor: PerformanceMonitor;
+  private readonly circuitBreaker: CircuitBreaker;
+  private readonly jobParser: JobPostingParser;
 
-  // Configuration constants
+  // Enhanced configuration constants
   private static readonly CONFIG = {
     MAX_PAGES: 10,
     JOBS_PER_PAGE: 25,
@@ -47,8 +66,25 @@ export class JobSearchHandler {
     },
   } as const;
 
-  // Use centralized selector management
-  private static readonly SELECTORS = LinkedInSelectors.SELECTORS;
+  // Cached selectors for better performance
+  private static readonly CACHED_SELECTORS = {
+    SEARCH_INPUT: LinkedInSelectors.SELECTORS.SEARCH_INPUT,
+    LOCATION_INPUT: LinkedInSelectors.SELECTORS.LOCATION_INPUT,
+    SEARCH_BUTTON: LinkedInSelectors.SELECTORS.SEARCH_BUTTON,
+    JOB_CARD: LinkedInSelectors.SELECTORS.JOB_CARD,
+    JOB_RESULTS_LIST: LinkedInSelectors.SELECTORS.JOB_RESULTS_LIST,
+    FILTERS_BUTTON: LinkedInSelectors.SELECTORS.FILTERS_BUTTON,
+    APPLY_FILTERS_BUTTON: LinkedInSelectors.SELECTORS.APPLY_FILTERS_BUTTON,
+    NEXT_PAGE_BUTTON: LinkedInSelectors.SELECTORS.NEXT_PAGE_BUTTON,
+    RESULTS_COUNT: LinkedInSelectors.SELECTORS.RESULTS_COUNT,
+    JOB_TITLE: LinkedInSelectors.SELECTORS.JOB_TITLE,
+    JOB_COMPANY: LinkedInSelectors.SELECTORS.JOB_COMPANY,
+    JOB_LOCATION: LinkedInSelectors.SELECTORS.JOB_LOCATION,
+    EASY_APPLY_BUTTON: LinkedInSelectors.SELECTORS.EASY_APPLY_BUTTON,
+    NO_RESULTS: LinkedInSelectors.SELECTORS.NO_RESULTS,
+    LOADING_SPINNER: LinkedInSelectors.SELECTORS.LOADING_SPINNER,
+  } as const;
+
   private static readonly FILTER_VALUES = LinkedInSelectors.FILTER_VALUES;
 
   constructor(page: Page, searchConfig: JobSearchConfig, logger?: Logger) {
@@ -57,7 +93,12 @@ export class JobSearchHandler {
     this.logger = logger || new Logger(LogLevel.INFO);
     this.performanceMonitor = new PerformanceMonitor(this.logger);
     this.circuitBreaker = CircuitBreaker.forLinkedIn(this.logger);
+    this.jobParser = new JobPostingParser(this.page, this.logger);
   }
+
+  // ============================================================================
+  // PUBLIC METHODS
+  // ============================================================================
 
   /**
    * Performs a complete job search with the configured parameters
@@ -73,234 +114,457 @@ export class JobSearchHandler {
       });
 
       // Validate search configuration
-      const validation = this.validateSearchConfig();
+      const validation = JobSearchConfigValidator.validate(this.searchConfig);
       if (!validation.isValid) {
-        return {
-          success: false,
-          error: {
-            code: 'INVALID_SEARCH_CONFIG',
-            message: `Invalid search configuration: ${validation.errors.join(', ')}`,
-            timestamp: new Date(),
-            recoverable: true,
-          },
-        };
+        return this.createErrorResponse(
+          'INVALID_SEARCH_CONFIG',
+          `Invalid search configuration: ${validation.errors.join(', ')}`,
+          true
+        );
       }
 
-      // Navigate to LinkedIn jobs page
-      await this.navigateToJobsPage();
+      // Execute search workflow
+      await this.executeSearchWorkflow();
 
-      // Apply search parameters
-      await this.applySearchParameters();
-
-      // Apply filters
-      await this.applySearchFilters();
-
-      // Extract job listings with pagination
+      // Extract and return results
       const searchResults = await this.extractJobListings();
 
-      this.logger.info('Job search completed successfully', {
-        totalJobs: searchResults.totalCount,
-        pages: Math.ceil(
-          searchResults.totalCount / JobSearchHandler.CONFIG.JOBS_PER_PAGE
-        ),
-      });
-
-      return {
-        success: true,
-        data: searchResults,
-      };
+      return this.createSuccessResponse(searchResults);
     } catch (error) {
-      this.logger.error('Job search failed', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-        searchConfig: this.searchConfig,
-      });
-
-      return {
-        success: false,
-        error: {
-          code: 'SEARCH_FAILED',
-          message:
-            error instanceof Error ? error.message : 'Unknown search error',
-          timestamp: new Date(),
-          recoverable: true,
-        },
-      };
+      return this.handleSearchError(error);
     }
   }
 
   /**
-   * Navigates to LinkedIn jobs page
+   * Updates the search configuration
+   * @param newConfig New search configuration
    */
-  private async navigateToJobsPage(): Promise<void> {
-    await this.performanceMonitor.timePageLoad(
-      'https://www.linkedin.com/jobs/',
-      async () => {
-        this.logger.debug('Navigating to LinkedIn jobs page');
-
-        await RetryUtils.retryPageOperation(
-          async () => {
-            await this.page.goto('https://www.linkedin.com/jobs/', {
-              waitUntil: 'networkidle2',
-              timeout: JobSearchHandler.CONFIG.TIMEOUTS.PAGE_LOAD,
-            });
-
-            // Wait for the search form to be available with fallback selectors
-            const searchSelector = await LinkedInSelectors.getWorkingSelector(
-              this.page,
-              JobSearchHandler.SELECTORS.SEARCH_INPUT,
-              [...LinkedInSelectors.FALLBACK_SELECTORS.SEARCH_INPUT]
-            );
-
-            if (!searchSelector) {
-              throw new Error('Search input not found on LinkedIn jobs page');
-            }
-
-            await this.page.waitForSelector(searchSelector, {
-              timeout: JobSearchHandler.CONFIG.TIMEOUTS.ELEMENT_WAIT,
-            });
-          },
-          'Navigate to LinkedIn jobs page',
-          this.logger
-        );
-
-        await DelayUtils.pageLoadDelay();
-      }
-    );
-
-    await DelayUtils.pageLoadDelay();
+  public updateSearchConfig(newConfig: Partial<JobSearchConfig>): void {
+    this.searchConfig = { ...this.searchConfig, ...newConfig };
+    this.logger.debug('Search configuration updated', { newConfig });
   }
 
   /**
-   * Applies basic search parameters (keywords and location)
+   * Gets the current search configuration
+   * @returns Current search configuration
+   */
+  public getSearchConfig(): JobSearchConfig {
+    return { ...this.searchConfig };
+  }
+
+  /**
+   * Gets performance monitoring report
+   */
+  public getPerformanceReport(): PerformanceReport {
+    return this.performanceMonitor.getReport();
+  }
+
+  /**
+   * Gets circuit breaker statistics
+   */
+  public getCircuitBreakerStats(): CircuitBreakerStats {
+    return this.circuitBreaker.getStats();
+  }
+
+  /**
+   * Checks if the handler is healthy (circuit breaker closed, no slow operations)
+   */
+  public isHealthy(): boolean {
+    return (
+      this.circuitBreaker.isHealthy() &&
+      !this.performanceMonitor.hasSlowOperations()
+    );
+  }
+
+  /**
+   * Resets performance monitoring and circuit breaker stats
+   */
+  public reset(): void {
+    this.performanceMonitor.clear();
+    this.circuitBreaker.forceClose();
+    this.logger.info(
+      'JobSearchHandler reset - cleared performance metrics and circuit breaker'
+    );
+  }
+
+  // ============================================================================
+  // PRIVATE WORKFLOW METHODS
+  // ============================================================================
+
+  /**
+   * Executes the main search workflow steps
+   */
+  private async executeSearchWorkflow(): Promise<void> {
+    await this.navigateToJobsPage();
+    await this.applySearchParameters();
+    await this.applySearchFilters();
+  }
+
+  /**
+   * Creates a success response with search results
+   */
+  private createSuccessResponse(
+    searchResults: SearchResult<JobPosting>
+  ): ServiceResponse<SearchResult<JobPosting>> {
+    this.logger.info('Job search completed successfully', {
+      totalJobs: searchResults.totalCount,
+      pages: Math.ceil(
+        searchResults.totalCount / JobSearchHandler.CONFIG.JOBS_PER_PAGE
+      ),
+    });
+
+    return {
+      success: true,
+      data: searchResults,
+    };
+  }
+
+  /**
+   * Creates an error response with proper typing
+   */
+  private createErrorResponse(
+    code: ErrorCode,
+    message: string,
+    recoverable: boolean = true
+  ): ServiceResponse<SearchResult<JobPosting>> {
+    return {
+      success: false,
+      error: {
+        code,
+        message,
+        timestamp: new Date(),
+        recoverable,
+      },
+    };
+  }
+
+  /**
+   * Handles search errors and creates appropriate error response
+   */
+  private handleSearchError(
+    error: unknown
+  ): ServiceResponse<SearchResult<JobPosting>> {
+    const errorMessage =
+      error instanceof Error ? error.message : 'Unknown error';
+
+    this.logger.error('Job search failed', {
+      error: errorMessage,
+      errorType: error?.constructor?.name,
+      searchConfig: this.searchConfig,
+    });
+
+    // Handle specific error types
+    if (error instanceof NavigationError) {
+      return this.createErrorResponse('NAVIGATION_FAILED', errorMessage, false);
+    }
+
+    if (error instanceof SearchError) {
+      return this.createErrorResponse(
+        'SEARCH_FAILED',
+        errorMessage,
+        error.recoverable
+      );
+    }
+
+    if (error instanceof ExtractionError) {
+      return this.createErrorResponse('EXTRACTION_FAILED', errorMessage, true);
+    }
+
+    if (error instanceof Error && error.message.includes('timeout')) {
+      return this.createErrorResponse('TIMEOUT_ERROR', errorMessage, true);
+    }
+
+    // Default error handling
+    return this.createErrorResponse(
+      'SEARCH_FAILED',
+      errorMessage,
+      !(error instanceof NavigationError)
+    );
+  }
+
+  // ============================================================================
+  // PRIVATE NAVIGATION METHODS
+  // ============================================================================
+
+  /**
+   * Navigates to LinkedIn jobs page with enhanced error handling
+   */
+  private async navigateToJobsPage(): Promise<void> {
+    const metricName = 'navigate-to-jobs-page';
+    this.performanceMonitor.startTimer(metricName, {
+      operation: 'navigation',
+      url: 'https://www.linkedin.com/jobs/',
+    });
+
+    try {
+      this.logger.debug('Navigating to LinkedIn jobs page');
+
+      await RetryUtils.retryPageOperation(
+        async () => {
+          await this.page.goto('https://www.linkedin.com/jobs/', {
+            waitUntil: 'networkidle2',
+            timeout: JobSearchHandler.CONFIG.TIMEOUTS.PAGE_LOAD,
+          });
+
+          // Wait for the search form to be available with fallback selectors
+          const searchSelector = await LinkedInSelectors.getWorkingSelector(
+            this.page,
+            JobSearchHandler.CACHED_SELECTORS.SEARCH_INPUT,
+            [...LinkedInSelectors.FALLBACK_SELECTORS.SEARCH_INPUT]
+          );
+
+          if (!searchSelector) {
+            throw new NavigationError(
+              'Search input not found on LinkedIn jobs page'
+            );
+          }
+
+          await this.page.waitForSelector(searchSelector, {
+            timeout: JobSearchHandler.CONFIG.TIMEOUTS.ELEMENT_WAIT,
+          });
+        },
+        'Navigate to LinkedIn jobs page',
+        this.logger
+      );
+
+      await DelayUtils.pageLoadDelay();
+      this.performanceMonitor.endTimer(metricName, { success: true });
+    } catch (error) {
+      this.performanceMonitor.endTimer(metricName, {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+
+      if (error instanceof Error && error.message.includes('timeout')) {
+        throw new NavigationError(`Navigation timeout: ${error.message}`);
+      }
+
+      throw error instanceof NavigationError
+        ? error
+        : new NavigationError(
+            `Failed to navigate to LinkedIn jobs page: ${error instanceof Error ? error.message : 'Unknown error'}`
+          );
+    }
+  }
+
+  /**
+   * Applies basic search parameters (keywords and location) with performance monitoring
    */
   private async applySearchParameters(): Promise<void> {
-    this.logger.debug('Applying search parameters', {
+    const metricName = 'apply-search-parameters';
+    this.performanceMonitor.startTimer(metricName, {
+      operation: 'search_operation',
       keywords: this.searchConfig.keywords,
       location: this.searchConfig.location,
     });
 
-    // Clear and fill keywords
-    const keywordsString = this.searchConfig.keywords.join(' ');
-    await this.page.click(JobSearchHandler.SELECTORS.SEARCH_INPUT);
-    await this.page.keyboard.down('Control');
-    await this.page.keyboard.press('KeyA');
-    await this.page.keyboard.up('Control');
-    await DelayUtils.randomDelay(100, 300);
+    try {
+      this.logger.debug('Applying search parameters', {
+        keywords: this.searchConfig.keywords,
+        location: this.searchConfig.location,
+      });
 
-    await this.page.type(
-      JobSearchHandler.SELECTORS.SEARCH_INPUT,
-      keywordsString,
-      {
-        delay: DelayUtils.getRandomTypingDelay(
-          JobSearchHandler.CONFIG.DELAYS.TYPING_MIN,
-          JobSearchHandler.CONFIG.DELAYS.TYPING_MAX
-        ),
-      }
-    );
+      // Apply keywords
+      await this.fillSearchInput(
+        JobSearchHandler.CACHED_SELECTORS.SEARCH_INPUT,
+        this.searchConfig.keywords.join(' ')
+      );
 
-    await DelayUtils.formFieldDelay();
+      // Apply location
+      await this.fillSearchInput(
+        JobSearchHandler.CACHED_SELECTORS.LOCATION_INPUT,
+        this.searchConfig.location
+      );
 
-    // Clear and fill location
-    await this.page.click(JobSearchHandler.SELECTORS.LOCATION_INPUT);
-    await this.page.keyboard.down('Control');
-    await this.page.keyboard.press('KeyA');
-    await this.page.keyboard.up('Control');
-    await DelayUtils.randomDelay(100, 300);
+      // Execute search
+      await this.executeSearch();
 
-    await this.page.type(
-      JobSearchHandler.SELECTORS.LOCATION_INPUT,
-      this.searchConfig.location,
-      {
-        delay: DelayUtils.getRandomTypingDelay(
-          JobSearchHandler.CONFIG.DELAYS.TYPING_MIN,
-          JobSearchHandler.CONFIG.DELAYS.TYPING_MAX
-        ),
-      }
-    );
+      this.performanceMonitor.endTimer(metricName, { success: true });
+    } catch (error) {
+      this.performanceMonitor.endTimer(metricName, {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
 
-    await DelayUtils.formFieldDelay();
-
-    // Click search button
-    await this.page.click(JobSearchHandler.SELECTORS.SEARCH_BUTTON);
-
-    // Wait for results to load
-    await this.page.waitForSelector(
-      JobSearchHandler.SELECTORS.JOB_RESULTS_LIST,
-      {
-        timeout: 15000,
-      }
-    );
-
-    await DelayUtils.pageLoadDelay();
+      throw error instanceof SearchError
+        ? error
+        : new SearchError(
+            `Failed to apply search parameters: ${error instanceof Error ? error.message : 'Unknown error'}`
+          );
+    }
   }
 
   /**
-   * Applies advanced search filters
+   * Helper method to clear and fill an input field with human-like typing
    */
-  private async applySearchFilters(): Promise<void> {
-    this.logger.debug('Applying search filters');
-
+  private async fillSearchInput(
+    selector: string,
+    value: string
+  ): Promise<void> {
     try {
-      // Click "Show all filters" button
-      await this.page.waitForSelector(
-        JobSearchHandler.SELECTORS.FILTERS_BUTTON,
-        {
-          timeout: 5000,
-        }
+      await this.page.click(selector);
+      await this.page.keyboard.down('Control');
+      await this.page.keyboard.press('KeyA');
+      await this.page.keyboard.up('Control');
+      await DelayUtils.randomDelay(100, 300);
+
+      await this.page.type(selector, value, {
+        delay: DelayUtils.getRandomTypingDelay(
+          JobSearchHandler.CONFIG.DELAYS.TYPING_MIN,
+          JobSearchHandler.CONFIG.DELAYS.TYPING_MAX
+        ),
+      });
+
+      await DelayUtils.formFieldDelay();
+    } catch (error) {
+      throw new SearchError(
+        `Failed to fill input field ${selector}: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
-      await this.page.click(JobSearchHandler.SELECTORS.FILTERS_BUTTON);
+    }
+  }
 
-      await DelayUtils.randomDelay(1000, 2000);
+  /**
+   * Executes the search and waits for results
+   */
+  private async executeSearch(): Promise<void> {
+    try {
+      await this.page.click(JobSearchHandler.CACHED_SELECTORS.SEARCH_BUTTON);
 
-      // Apply Easy Apply filter (always enabled for this bot)
-      await this.applyEasyApplyFilter();
-
-      // Apply date posted filter
-      if (this.searchConfig.datePosted !== 'any') {
-        await this.applyDatePostedFilter();
-      }
-
-      // Apply remote work filter
-      if (this.searchConfig.remoteWork) {
-        await this.applyRemoteWorkFilter();
-      }
-
-      // Apply experience level filters
-      if (this.searchConfig.experienceLevel.length > 0) {
-        await this.applyExperienceLevelFilter();
-      }
-
-      // Apply job type filters
-      if (this.searchConfig.jobType.length > 0) {
-        await this.applyJobTypeFilter();
-      }
-
-      // Click "Show results" button
+      // Wait for results to load
       await this.page.waitForSelector(
-        JobSearchHandler.SELECTORS.APPLY_FILTERS_BUTTON,
+        JobSearchHandler.CACHED_SELECTORS.JOB_RESULTS_LIST,
         {
-          timeout: 5000,
-        }
-      );
-      await this.page.click(JobSearchHandler.SELECTORS.APPLY_FILTERS_BUTTON);
-
-      // Wait for filtered results to load
-      await this.page.waitForSelector(
-        JobSearchHandler.SELECTORS.JOB_RESULTS_LIST,
-        {
-          timeout: 15000,
+          timeout: JobSearchHandler.CONFIG.TIMEOUTS.RESULTS_WAIT,
         }
       );
 
       await DelayUtils.pageLoadDelay();
     } catch (error) {
+      throw new SearchError(
+        `Search execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  // ============================================================================
+  // PRIVATE FILTER METHODS
+  // ============================================================================
+
+  /**
+   * Applies advanced search filters with comprehensive error handling
+   */
+  private async applySearchFilters(): Promise<void> {
+    const metricName = 'apply-search-filters';
+    this.performanceMonitor.startTimer(metricName, {
+      operation: 'filter_operation',
+      filtersCount: this.getActiveFiltersCount(),
+    });
+
+    try {
+      this.logger.debug('Applying search filters', {
+        datePosted: this.searchConfig.datePosted,
+        remoteWork: this.searchConfig.remoteWork,
+        experienceLevel: this.searchConfig.experienceLevel,
+        jobType: this.searchConfig.jobType,
+      });
+
+      await this.openFiltersPanel();
+      await this.applyAllFilters();
+      await this.submitFilters();
+
+      this.performanceMonitor.endTimer(metricName, { success: true });
+    } catch (error) {
+      this.performanceMonitor.endTimer(metricName, {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+
       this.logger.warn(
         'Failed to apply some filters, continuing with basic search',
         {
           error: error instanceof Error ? error.message : 'Unknown error',
         }
       );
+      // Don't throw - filters are optional, continue with basic search
     }
+  }
+
+  /**
+   * Opens the filters panel
+   */
+  private async openFiltersPanel(): Promise<void> {
+    await this.page.waitForSelector(
+      JobSearchHandler.CACHED_SELECTORS.FILTERS_BUTTON,
+      {
+        timeout: JobSearchHandler.CONFIG.TIMEOUTS.FILTER_WAIT,
+      }
+    );
+    await this.page.click(JobSearchHandler.CACHED_SELECTORS.FILTERS_BUTTON);
+    await DelayUtils.randomDelay(1000, 2000);
+  }
+
+  /**
+   * Applies all configured filters
+   */
+  private async applyAllFilters(): Promise<void> {
+    // Apply Easy Apply filter (always enabled for this bot)
+    await this.applyEasyApplyFilter();
+
+    // Apply conditional filters
+    if (this.searchConfig.datePosted !== 'any') {
+      await this.applyDatePostedFilter();
+    }
+
+    if (this.searchConfig.remoteWork) {
+      await this.applyRemoteWorkFilter();
+    }
+
+    if (this.searchConfig.experienceLevel.length > 0) {
+      await this.applyExperienceLevelFilter();
+    }
+
+    if (this.searchConfig.jobType.length > 0) {
+      await this.applyJobTypeFilter();
+    }
+  }
+
+  /**
+   * Submits the applied filters
+   */
+  private async submitFilters(): Promise<void> {
+    await this.page.waitForSelector(
+      JobSearchHandler.CACHED_SELECTORS.APPLY_FILTERS_BUTTON,
+      {
+        timeout: JobSearchHandler.CONFIG.TIMEOUTS.FILTER_WAIT,
+      }
+    );
+    await this.page.click(
+      JobSearchHandler.CACHED_SELECTORS.APPLY_FILTERS_BUTTON
+    );
+
+    // Wait for filtered results to load
+    await this.page.waitForSelector(
+      JobSearchHandler.CACHED_SELECTORS.JOB_RESULTS_LIST,
+      {
+        timeout: JobSearchHandler.CONFIG.TIMEOUTS.RESULTS_WAIT,
+      }
+    );
+
+    await DelayUtils.pageLoadDelay();
+  }
+
+  /**
+   * Gets the count of active filters for metrics
+   */
+  private getActiveFiltersCount(): number {
+    let count = 1; // Easy Apply is always active
+
+    if (this.searchConfig.datePosted !== 'any') count++;
+    if (this.searchConfig.remoteWork) count++;
+    count += this.searchConfig.experienceLevel.length;
+    count += this.searchConfig.jobType.length;
+
+    return count;
   }
 
   /**
@@ -413,6 +677,10 @@ export class JobSearchHandler {
     }
   }
 
+  // ============================================================================
+  // PRIVATE EXTRACTION METHODS
+  // ============================================================================
+
   /**
    * Extracts job listings from all pages
    */
@@ -482,18 +750,21 @@ export class JobSearchHandler {
     try {
       // Wait for either job results or no results message
       await Promise.race([
-        this.page.waitForSelector(JobSearchHandler.SELECTORS.JOB_CARD, {
+        this.page.waitForSelector(JobSearchHandler.CACHED_SELECTORS.JOB_CARD, {
           timeout: 10000,
         }),
-        this.page.waitForSelector(JobSearchHandler.SELECTORS.NO_RESULTS, {
-          timeout: 10000,
-        }),
+        this.page.waitForSelector(
+          JobSearchHandler.CACHED_SELECTORS.NO_RESULTS,
+          {
+            timeout: 10000,
+          }
+        ),
       ]);
 
       // Wait for loading spinner to disappear
       try {
         await this.page.waitForSelector(
-          JobSearchHandler.SELECTORS.LOADING_SPINNER,
+          JobSearchHandler.CACHED_SELECTORS.LOADING_SPINNER,
           {
             hidden: true,
             timeout: 5000,
@@ -508,125 +779,68 @@ export class JobSearchHandler {
   }
 
   /**
-   * Extracts job postings from the current page
+   * Extracts job postings from the current page with enhanced error handling
    */
   private async extractJobsFromCurrentPage(): Promise<JobPosting[]> {
-    const jobs: JobPosting[] = [];
+    const metricName = 'extract-jobs-from-page';
+    let jobs: JobPosting[] = [];
+
+    this.performanceMonitor.startTimer(metricName, {
+      operation: 'extraction',
+      page: 'current',
+    });
 
     try {
-      const jobCards = await this.page.$$(JobSearchHandler.SELECTORS.JOB_CARD);
+      const jobCards = await this.page.$$(
+        JobSearchHandler.CACHED_SELECTORS.JOB_CARD
+      );
 
-      for (const jobCard of jobCards) {
-        try {
-          const job = await this.extractJobFromCard(jobCard);
-          if (job) {
-            jobs.push(job);
-          }
-        } catch (error) {
-          this.logger.debug('Failed to extract job from card', {
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-        }
-      }
+      this.logger.debug(`Found ${jobCards.length} job cards on current page`);
+
+      // Use JobPostingParser to parse all job cards
+      jobs = await this.jobParser.parseJobCards(jobCards);
+
+      this.performanceMonitor.endTimer(metricName, {
+        success: true,
+        extractedCount: jobs.length,
+        totalCards: jobCards.length,
+      });
     } catch (error) {
-      this.logger.error('Failed to extract jobs from current page', {
+      this.performanceMonitor.endTimer(metricName, {
+        success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
       });
+
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to extract jobs from current page', {
+        error: errorMessage,
+      });
+
+      throw new ExtractionError(`Page extraction failed: ${errorMessage}`);
     }
 
     return jobs;
   }
 
-  /**
-   * Extracts job information from a single job card element
-   */
-  private async extractJobFromCard(
-    jobCard: import('puppeteer').ElementHandle
-  ): Promise<JobPosting | null> {
-    try {
-      // Extract job title and URL
-      const titleElement = await jobCard.$(
-        JobSearchHandler.SELECTORS.JOB_TITLE
-      );
-      const title = titleElement
-        ? await this.page.evaluate((el) => el.textContent?.trim(), titleElement)
-        : '';
-      const url = titleElement
-        ? await this.page.evaluate((el) => el.href, titleElement)
-        : '';
-
-      // Extract job ID from URL
-      const jobIdMatch = url.match(/jobs\/view\/(\d+)/);
-      const jobId = jobIdMatch ? jobIdMatch[1] : '';
-
-      // Extract company name
-      const companyElement = await jobCard.$(
-        JobSearchHandler.SELECTORS.JOB_COMPANY
-      );
-      const company = companyElement
-        ? await this.page.evaluate(
-            (el) => el.textContent?.trim(),
-            companyElement
-          )
-        : '';
-
-      // Extract location
-      const locationElement = await jobCard.$(
-        JobSearchHandler.SELECTORS.JOB_LOCATION
-      );
-      const location = locationElement
-        ? await this.page.evaluate(
-            (el) => el.textContent?.trim(),
-            locationElement
-          )
-        : '';
-
-      // Check if Easy Apply is available
-      const easyApplyElement = await jobCard.$(
-        JobSearchHandler.SELECTORS.EASY_APPLY_BUTTON
-      );
-      const isEasyApply = !!easyApplyElement;
-
-      // Only return jobs that have Easy Apply (as per requirements)
-      if (!isEasyApply || !jobId || !title || !company) {
-        return null;
-      }
-
-      return {
-        id: jobId,
-        title: title || 'Unknown Title',
-        company: company || 'Unknown Company',
-        location: location || 'Unknown Location',
-        url: url || '',
-        status: 'found',
-        isEasyApply: true,
-        appliedAt: null,
-        description: null,
-        salary: null,
-        errorMessage: null,
-      };
-    } catch (error) {
-      this.logger.debug('Error extracting job from card', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-      return null;
-    }
-  }
+  // ============================================================================
+  // PRIVATE UTILITY METHODS
+  // ============================================================================
 
   /**
-   * Gets the total number of search results
+   * Gets the total number of search results with fallback estimation
    */
   private async getTotalResultsCount(): Promise<number> {
     try {
       await this.page.waitForSelector(
-        JobSearchHandler.SELECTORS.RESULTS_COUNT,
+        JobSearchHandler.CACHED_SELECTORS.RESULTS_COUNT,
         {
-          timeout: 5000,
+          timeout: JobSearchHandler.CONFIG.TIMEOUTS.FILTER_WAIT,
         }
       );
 
       const countText = await this.page.$eval(
-        JobSearchHandler.SELECTORS.RESULTS_COUNT,
+        JobSearchHandler.CACHED_SELECTORS.RESULTS_COUNT,
         (el) => el.textContent?.trim() || '0'
       );
 
@@ -639,7 +853,9 @@ export class JobSearchHandler {
       return 0;
     } catch {
       // If we can't get the count, estimate based on visible job cards
-      const jobCards = await this.page.$$(JobSearchHandler.SELECTORS.JOB_CARD);
+      const jobCards = await this.page.$$(
+        JobSearchHandler.CACHED_SELECTORS.JOB_CARD
+      );
       return jobCards.length;
     }
   }
@@ -650,7 +866,7 @@ export class JobSearchHandler {
   private async hasNextPage(): Promise<boolean> {
     try {
       const nextButton = await this.page.$(
-        JobSearchHandler.SELECTORS.NEXT_PAGE_BUTTON
+        JobSearchHandler.CACHED_SELECTORS.NEXT_PAGE_BUTTON
       );
       if (!nextButton) return false;
 
@@ -670,7 +886,7 @@ export class JobSearchHandler {
   private async goToNextPage(): Promise<void> {
     try {
       const nextButton = await this.page.$(
-        JobSearchHandler.SELECTORS.NEXT_PAGE_BUTTON
+        JobSearchHandler.CACHED_SELECTORS.NEXT_PAGE_BUTTON
       );
       if (nextButton) {
         await nextButton.click();
@@ -681,135 +897,5 @@ export class JobSearchHandler {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
-  }
-
-  /**
-   * Validates the search configuration
-   */
-  private validateSearchConfig(): { isValid: boolean; errors: string[] } {
-    const errors: string[] = [];
-
-    this.validateKeywords(errors);
-    this.validateLocation(errors);
-    this.validateDatePosted(errors);
-    this.validateExperienceLevels(errors);
-    this.validateJobTypes(errors);
-
-    return {
-      isValid: errors.length === 0,
-      errors,
-    };
-  }
-
-  private validateKeywords(errors: string[]): void {
-    if (
-      !this.searchConfig.keywords ||
-      this.searchConfig.keywords.length === 0
-    ) {
-      errors.push('Keywords are required');
-    }
-
-    if (this.searchConfig.keywords.some((keyword) => !keyword.trim())) {
-      errors.push('Keywords cannot be empty');
-    }
-  }
-
-  private validateLocation(errors: string[]): void {
-    if (!this.searchConfig.location || !this.searchConfig.location.trim()) {
-      errors.push('Location is required');
-    }
-  }
-
-  private validateDatePosted(errors: string[]): void {
-    const validDateOptions = ['past24h', 'pastWeek', 'pastMonth', 'any'];
-    if (!validDateOptions.includes(this.searchConfig.datePosted)) {
-      errors.push('Invalid date posted option');
-    }
-  }
-
-  private validateExperienceLevels(errors: string[]): void {
-    const validExperienceLevels = [
-      'internship',
-      'entry',
-      'associate',
-      'mid',
-      'director',
-      'executive',
-    ];
-    if (
-      this.searchConfig.experienceLevel.some(
-        (level) => !validExperienceLevels.includes(level)
-      )
-    ) {
-      errors.push('Invalid experience level specified');
-    }
-  }
-
-  private validateJobTypes(errors: string[]): void {
-    const validJobTypes = [
-      'fullTime',
-      'partTime',
-      'contract',
-      'temporary',
-      'volunteer',
-      'internship',
-    ];
-    if (
-      this.searchConfig.jobType.some((type) => !validJobTypes.includes(type))
-    ) {
-      errors.push('Invalid job type specified');
-    }
-  }
-
-  /**
-   * Updates the search configuration
-   * @param newConfig New search configuration
-   */
-  public updateSearchConfig(newConfig: Partial<JobSearchConfig>): void {
-    this.searchConfig = { ...this.searchConfig, ...newConfig };
-    this.logger.debug('Search configuration updated', { newConfig });
-  }
-
-  /**
-   * Gets the current search configuration
-   * @returns Current search configuration
-   */
-  public getSearchConfig(): JobSearchConfig {
-    return { ...this.searchConfig };
-  }
-
-  /**
-   * Gets performance monitoring report
-   */
-  public getPerformanceReport(): PerformanceReport {
-    return this.performanceMonitor.getReport();
-  }
-
-  /**
-   * Gets circuit breaker statistics
-   */
-  public getCircuitBreakerStats(): CircuitBreakerStats {
-    return this.circuitBreaker.getStats();
-  }
-
-  /**
-   * Checks if the handler is healthy (circuit breaker closed, no slow operations)
-   */
-  public isHealthy(): boolean {
-    return (
-      this.circuitBreaker.isHealthy() &&
-      !this.performanceMonitor.hasSlowOperations()
-    );
-  }
-
-  /**
-   * Resets performance monitoring and circuit breaker stats
-   */
-  public reset(): void {
-    this.performanceMonitor.clear();
-    this.circuitBreaker.forceClose();
-    this.logger.info(
-      'JobSearchHandler reset - cleared performance metrics and circuit breaker'
-    );
   }
 }
