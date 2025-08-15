@@ -145,9 +145,10 @@ describe('SessionManager', () => {
 
     describe('validateSession', () => {
         it('should return false when page is not set', async () => {
-            sessionManager.setPage(null as any);
+            // Create a new SessionManager without setting a page
+            const sessionManagerWithoutPage = new SessionManager(config, delayConfig, logger, './test-cookies.json');
 
-            const result = await sessionManager.validateSession();
+            const result = await sessionManagerWithoutPage.validateSession();
 
             expect(result).toBe(false);
         });
