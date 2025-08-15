@@ -1,5 +1,13 @@
-// Utilities barrel exports
-export * from './DelayUtils';
-export * from './ErrorHandler';
-export * from './Logger';
-export * from './SelectorUtils';
+/**
+ * Utility exports for timing and browser interactions
+ */
+export { DelayUtils } from './DelayUtils';
+export { HumanLikeInteractions } from './HumanLikeInteractions';
+
+// Re-export types for convenience
+export type {
+  ClickOptions,
+  ScrollOptions,
+  TimingAction,
+  TypingOptions,
+} from './HumanLikeInteractions';

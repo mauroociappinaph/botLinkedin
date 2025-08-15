@@ -52,14 +52,18 @@ export class Logger {
   /**
    * Creates a logger with INFO level for production (safer than ERROR-only)
    */
-  public static createProductionLogger(format: LogFormat = LogFormat.JSON): Logger {
+  public static createProductionLogger(
+    format: LogFormat = LogFormat.JSON
+  ): Logger {
     return new Logger({ level: LogLevel.INFO, format });
   }
 
   /**
    * Creates a logger with ERROR level only (for critical production environments)
    */
-  public static createErrorOnlyLogger(format: LogFormat = LogFormat.JSON): Logger {
+  public static createErrorOnlyLogger(
+    format: LogFormat = LogFormat.JSON
+  ): Logger {
     return new Logger({ level: LogLevel.ERROR, format });
   }
 
