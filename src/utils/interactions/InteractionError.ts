@@ -93,6 +93,9 @@ export class InteractionError extends Error {
      * Factory method for timeout errors
      */
     public static timeout(operation: string, selector?: string, timeoutMs?: number): InteractionError {
+        if (timeoutMs != null && timeoutMs <= 0) {
+            throw new Error('Timeout must be a positive number');
+        }
         const context = timeoutMs ? { timeoutMs } : undefined;
         return new InteractionError(operation, selector, undefined, undefined, context);
     }
@@ -101,6 +104,9 @@ export class InteractionError extends Error {
      * Factory method for element not found errors
      */
     public static elementNotFound(selector: string): InteractionError {
+        if (!selector?.trim()) {
+            throw new Error('Selector is required for element not found errors');
+        }
         return new InteractionError('element lookup', selector, undefined, undefined, { reason: 'not found' });
     }
 
