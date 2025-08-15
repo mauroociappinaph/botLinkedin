@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { Page } from 'puppeteer';
 import { DelayUtils } from '../../../src/utils/DelayUtils';
 import { HumanLikeInteractions } from '../../../src/utils/HumanLikeInteractions';
@@ -31,9 +32,9 @@ describe('DelayUtils', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         // Mock setTimeout to resolve immediately for faster tests
-        jest.spyOn(global, 'setTimeout').mockImplementation((callback: any) => {
+        jest.spyOn(global, 'setTimeout').mockImplementation((callback: () => void) => {
             callback();
-            return 1 as any;
+            return 1 as unknown as NodeJS.Timeout;
         });
     });
 
@@ -242,8 +243,8 @@ describe('DelayUtils', () => {
             const notifyCallback = jest.fn();
 
             // Mock setInterval and clearInterval
-            const mockInterval = 123;
-            jest.spyOn(global, 'setInterval').mockReturnValue(mockInterval as unknown as NodeJS.Timeout);
+            const mockInterval = 123 as unknown as NodeJS.Timeout;
+            jest.spyOn(global, 'setInterval').mockReturnValue(mockInterval);
             jest.spyOn(global, 'clearInterval').mockImplementation(() => { });
 
             await DelayUtils.captchaPause(1000, 2000, notifyCallback);
