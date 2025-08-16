@@ -44,7 +44,7 @@ export class CaptchaHandler {
   constructor(
     private page: Page,
     private logger: Logger
-  ) { }
+  ) {}
 
   /**
    * Detects if a CAPTCHA or security challenge is present on the page
@@ -54,7 +54,8 @@ export class CaptchaHandler {
       this.logger.info('Checking for CAPTCHA or security challenges...');
 
       // Check for CAPTCHA containers
-      for (const selector of CaptchaHandler.CAPTCHA_SELECTORS.CAPTCHA_CONTAINER) {
+      for (const selector of CaptchaHandler.CAPTCHA_SELECTORS
+        .CAPTCHA_CONTAINER) {
         const element = await this.page.$(selector);
         if (element) {
           this.logger.warn(`CAPTCHA detected using selector: ${selector}`);
@@ -63,14 +64,17 @@ export class CaptchaHandler {
       }
 
       // Check for reCAPTCHA frames
-      const recaptchaFrame = await this.page.$(CaptchaHandler.CAPTCHA_SELECTORS.RECAPTCHA_FRAME);
+      const recaptchaFrame = await this.page.$(
+        CaptchaHandler.CAPTCHA_SELECTORS.RECAPTCHA_FRAME
+      );
       if (recaptchaFrame) {
         this.logger.warn('reCAPTCHA frame detected');
         return true;
       }
 
       // Check for LinkedIn specific challenges
-      for (const selector of CaptchaHandler.CAPTCHA_SELECTORS.LINKEDIN_CHALLENGE) {
+      for (const selector of CaptchaHandler.CAPTCHA_SELECTORS
+        .LINKEDIN_CHALLENGE) {
         const element = await this.page.$(selector);
         if (element) {
           this.logger.warn(`LinkedIn security challenge detected: ${selector}`);
@@ -84,12 +88,14 @@ export class CaptchaHandler {
           'Security Verification',
           'Help us protect the LinkedIn community',
           'Please complete this security check',
-          'Verify you\'re human',
+          "Verify you're human",
           'Are you a robot?',
         ];
 
-        const bodyText = document.body.innerText.toLowerCase();
-        return indicators.some(indicator =>
+        const bodyText = (
+          globalThis as any
+        ).document.body.innerText.toLowerCase();
+        return indicators.some((indicator) =>
           bodyText.includes(indicator.toLowerCase())
         );
       });
@@ -108,7 +114,7 @@ export class CaptchaHandler {
         '/verification',
       ];
 
-      const urlHasChallenge = challengeUrlPatterns.some(pattern =>
+      const urlHasChallenge = challengeUrlPatterns.some((pattern) =>
         currentUrl.includes(pattern)
       );
 
@@ -129,7 +135,9 @@ export class CaptchaHandler {
    */
   public async handleCaptcha(): Promise<boolean> {
     try {
-      this.logger.warn('CAPTCHA detected! Pausing automation for manual intervention.');
+      this.logger.warn(
+        'CAPTCHA detected! Pausing automation for manual intervention.'
+      );
 
       // Take screenshot for debugging
       await this.takeScreenshot('captcha-detected');
@@ -141,7 +149,9 @@ export class CaptchaHandler {
       const resolved = await this.waitForCaptchaResolution();
 
       if (resolved) {
-        this.logger.info('CAPTCHA resolved successfully. Resuming automation...');
+        this.logger.info(
+          'CAPTCHA resolved successfully. Resuming automation...'
+        );
         await DelayUtils.randomDelay(2000, 4000); // Brief pause before continuing
         return true;
       } else {
@@ -161,7 +171,9 @@ export class CaptchaHandler {
     const startTime = Date.now();
     const timeoutMs = CaptchaHandler.CAPTCHA_TIMEOUT_MS;
 
-    this.logger.info(`Waiting for CAPTCHA resolution (timeout: ${timeoutMs / 1000}s)...`);
+    this.logger.info(
+      `Waiting for CAPTCHA resolution (timeout: ${timeoutMs / 1000}s)...`
+    );
 
     while (Date.now() - startTime < timeoutMs) {
       try {
@@ -183,9 +195,10 @@ export class CaptchaHandler {
         const elapsed = Date.now() - startTime;
         if (elapsed % 30000 < CaptchaHandler.CHECK_INTERVAL_MS) {
           const remaining = Math.ceil((timeoutMs - elapsed) / 1000);
-          this.logger.info(`Still waiting for CAPTCHA resolution... (${remaining}s remaining)`);
+          this.logger.info(
+            `Still waiting for CAPTCHA resolution... (${remaining}s remaining)`
+          );
         }
-
       } catch (error) {
         this.logger.error('Error while waiting for CAPTCHA resolution:', error);
         await DelayUtils.sleep(CaptchaHandler.CHECK_INTERVAL_MS);
@@ -288,7 +301,7 @@ export class CaptchaHandler {
     ];
 
     // Log to console and file
-    instructions.forEach(line => {
+    instructions.forEach((line) => {
       if (line.startsWith('🤖') || line.startsWith('=')) {
         this.logger.warn(line);
       } else {
@@ -318,13 +331,13 @@ export class CaptchaHandler {
       '',
       'If this happens frequently, consider:',
       '• Using a different LinkedIn account',
-      '• Reducing the bot\'s activity rate',
+      "• Reducing the bot's activity rate",
       '• Running the bot during off-peak hours',
       '',
       '='.repeat(40),
     ];
 
-    timeoutMessage.forEach(line => this.logger.warn(line));
+    timeoutMessage.forEach((line) => this.logger.warn(line));
   }
 
   /**
@@ -348,6 +361,6 @@ export class CaptchaHandler {
       '='.repeat(40),
     ];
 
-    failureMessage.forEach(line => this.logger.error(line));
+    failureMessage.forEach((line) => this.logger.error(line));
   }
 }

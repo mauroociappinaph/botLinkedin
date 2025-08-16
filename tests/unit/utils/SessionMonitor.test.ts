@@ -183,7 +183,7 @@ describe('SessionMonitor', () => {
             jest.advanceTimersByTime(1000);
 
             const alerts = monitor.getActiveAlerts();
-            expect(alerts[0].severity).toBe('critical');
+            expect(alerts[0]?.severity).toBe('critical');
         });
 
         test('should not duplicate similar alerts', () => {

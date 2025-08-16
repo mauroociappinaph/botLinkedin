@@ -41,6 +41,25 @@ export interface SessionStats {
 }
 
 /**
+ * Session report structure for file output
+ */
+export interface SessionReport {
+  sessionId: string;
+  duration: string;
+  summary: {
+    jobsProcessed: number;
+    applicationsSubmitted: number;
+    duplicatesSkipped: number;
+    errorsEncountered: number;
+    captchasChallenged: number;
+    successRate: string;
+    averageProcessingTime: string;
+  };
+  startTime: string;
+  endTime?: string;
+}
+
+/**
  * Comprehensive logging service with file rotation and monitoring capabilities
  * Supports multiple output levels, file-based logging, and session reporting
  */
@@ -289,9 +308,8 @@ export class Logger {
 
     stats.endTime = new Date();
     const duration = stats.endTime.getTime() - stats.startTime.getTime();
-    stats.averageProcessingTime = stats.jobsProcessed > 0
-      ? duration / stats.jobsProcessed
-      : 0;
+    stats.averageProcessingTime =
+      stats.jobsProcessed > 0 ? duration / stats.jobsProcessed : 0;
 
     this.generateSessionReport(stats);
     this.sessionStats.delete(sessionId);
@@ -363,9 +381,9 @@ export class Logger {
     this.updateSession(sessionId, {
       applicationsSubmitted: success
         ? (this.getSessionStats(sessionId)?.applicationsSubmitted || 0) + 1
-        : (this.getSessionStats(sessionId)?.applicationsSubmitted || 0),
+        : this.getSessionStats(sessionId)?.applicationsSubmitted || 0,
       errorsEncountered: success
-        ? (this.getSessionStats(sessionId)?.errorsEncountered || 0)
+        ? this.getSessionStats(sessionId)?.errorsEncountered || 0
         : (this.getSessionStats(sessionId)?.errorsEncountered || 0) + 1,
     });
   }
@@ -376,11 +394,7 @@ export class Logger {
    * @param type CAPTCHA type
    * @param resolved Whether it was resolved
    */
-  public logCaptcha(
-    sessionId: string,
-    type: string,
-    resolved: boolean
-  ): void {
+  public logCaptcha(sessionId: string, type: string, resolved: boolean): void {
     this.warn('CAPTCHA challenge encountered', {
       sessionId,
       type,
@@ -389,7 +403,8 @@ export class Logger {
     });
 
     this.updateSession(sessionId, {
-      captchasChallenged: (this.getSessionStats(sessionId)?.captchasChallenged || 0) + 1,
+      captchasChallenged:
+        (this.getSessionStats(sessionId)?.captchasChallenged || 0) + 1,
     });
   }
 
@@ -529,7 +544,10 @@ export class Logger {
     try {
       // Archive current file with rotation suffix
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const archivedName = this.currentLogFile.replace('.log', `-archived-${timestamp}.log`);
+      const archivedName = this.currentLogFile.replace(
+        '.log',
+        `-archived-${timestamp}.log`
+      );
       fs.renameSync(this.currentLogFile, archivedName);
 
       // Clean up old files after rotation
@@ -545,19 +563,20 @@ export class Logger {
    */
   private cleanupOldLogFiles(): void {
     try {
-      const files = fs.readdirSync(this.logDirectory)
-        .filter((file: string) => file.endsWith('.log'))
-        .map((file: string) => ({
+      const files = fs
+        .readdirSync(this.logDirectory)
+        .filter((file) => file.endsWith('.log'))
+        .map((file) => ({
           name: file,
           path: path.join(this.logDirectory, file),
           mtime: fs.statSync(path.join(this.logDirectory, file)).mtime,
         }))
-        .sort((a: any, b: any) => b.mtime.getTime() - a.mtime.getTime());
+        .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
 
       // Remove files beyond maxFiles limit
       if (files.length > this.maxFiles) {
         const filesToDelete = files.slice(this.maxFiles);
-        filesToDelete.forEach((file: any) => {
+        filesToDelete.forEach((file) => {
           try {
             fs.unlinkSync(file.path);
           } catch (error) {
@@ -594,7 +613,7 @@ export class Logger {
 
     for (const [key, value] of Object.entries(context)) {
       const lowerKey = key.toLowerCase();
-      const isSensitive = Logger.SENSITIVE_FIELDS.some(field =>
+      const isSensitive = Logger.SENSITIVE_FIELDS.some((field) =>
         lowerKey.includes(field)
       );
 
@@ -602,7 +621,10 @@ export class Logger {
         sanitized[key] = '[REDACTED]';
       } else if (typeof value === 'object' && value !== null) {
         // Recursively sanitize nested objects
-        sanitized[key] = this.sanitizeContext(value as Record<string, unknown>, seen);
+        sanitized[key] = this.sanitizeContext(
+          value as Record<string, unknown>,
+          seen
+        );
       } else {
         sanitized[key] = value;
       }
@@ -620,7 +642,7 @@ export class Logger {
       ? stats.endTime.getTime() - stats.startTime.getTime()
       : 0;
 
-    const report = {
+    const report: SessionReport = {
       sessionId: stats.sessionId,
       duration: `${Math.round(duration / 1000)}s`,
       summary: {
@@ -629,18 +651,24 @@ export class Logger {
         duplicatesSkipped: stats.duplicatesSkipped,
         errorsEncountered: stats.errorsEncountered,
         captchasChallenged: stats.captchasChallenged,
-        successRate: stats.jobsProcessed > 0
-          ? `${Math.round((stats.applicationsSubmitted / stats.jobsProcessed) * 100)}%`
-          : '0%',
+        successRate:
+          stats.jobsProcessed > 0
+            ? `${Math.round((stats.applicationsSubmitted / stats.jobsProcessed) * 100)}%`
+            : '0%',
         averageProcessingTime: stats.averageProcessingTime
           ? `${Math.round(stats.averageProcessingTime)}ms`
           : 'N/A',
       },
       startTime: stats.startTime.toISOString(),
-      endTime: stats.endTime?.toISOString(),
+      ...(stats.endTime && { endTime: stats.endTime.toISOString() }),
     };
 
-    this.info('Session completed', report);
+    // Log with sessionId as a top-level field for JSON format
+    this.log(
+      LogLevel.INFO,
+      'Session completed',
+      report as unknown as Record<string, unknown>
+    );
 
     // Also write detailed report to file if file logging is enabled
     if (this.enableFileLogging) {
@@ -652,18 +680,14 @@ export class Logger {
    * Writes detailed session report to a separate file
    * @param report Session report data
    */
-  private writeSessionReportToFile(report: any): void {
+  private writeSessionReportToFile(report: SessionReport): void {
     try {
       const reportFile = path.join(
         this.logDirectory,
         `session-report-${report.sessionId}.json`
       );
 
-      fs.writeFileSync(
-        reportFile,
-        JSON.stringify(report, null, 2),
-        'utf8'
-      );
+      fs.writeFileSync(reportFile, JSON.stringify(report, null, 2), 'utf8');
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Failed to write session report:', error);
@@ -685,12 +709,22 @@ export class Logger {
     const timestamp = new Date().toISOString();
 
     if (this.format === LogFormat.JSON) {
-      const logEntry = {
+      const logEntry: Record<string, unknown> = {
         timestamp,
         level: level.toUpperCase(),
         message,
         ...(context && { context }),
       };
+
+      // Include simple fields at top level for easier access, but avoid duplicating complex objects
+      if (context) {
+        for (const [key, value] of Object.entries(context)) {
+          if (typeof value !== 'object' || value === null) {
+            logEntry[key] = value;
+          }
+        }
+      }
+
       return this.safeStringify(logEntry);
     }
 

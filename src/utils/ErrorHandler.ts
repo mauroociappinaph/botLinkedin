@@ -21,10 +21,10 @@ export enum ErrorCategory {
  * Error severity levels
  */
 export enum ErrorSeverity {
-  LOW = 'low',           // Non-critical, can continue
-  MEDIUM = 'medium',     // Significant but recoverable
-  HIGH = 'high',         // Critical, requires intervention
-  FATAL = 'fatal',       // Unrecoverable, must stop
+  LOW = 'low', // Non-critical, can continue
+  MEDIUM = 'medium', // Significant but recoverable
+  HIGH = 'high', // Critical, requires intervention
+  FATAL = 'fatal', // Unrecoverable, must stop
 }
 
 /**
@@ -88,7 +88,10 @@ export class LinkedInBotError extends Error {
  * Comprehensive error handling with retry logic and recovery strategies
  */
 export class ErrorHandler {
-  private static readonly DEFAULT_RETRY_CONFIGS: Record<ErrorCategory, RetryConfig> = {
+  private static readonly DEFAULT_RETRY_CONFIGS: Record<
+    ErrorCategory,
+    RetryConfig
+  > = {
     [ErrorCategory.NETWORK]: {
       maxRetries: 3,
       baseDelayMs: 1000,
@@ -157,7 +160,7 @@ export class ErrorHandler {
   constructor(
     private logger: Logger,
     private page?: Page
-  ) { }
+  ) {}
 
   /**
    * Executes an operation with retry logic and error handling
@@ -195,7 +198,8 @@ export class ErrorHandler {
         attempt++;
 
         // Determine if we should retry
-        const shouldRetry = attempt <= retryConfig.maxRetries &&
+        const shouldRetry =
+          attempt <= retryConfig.maxRetries &&
           retryConfig.shouldRetry(lastError, attempt);
 
         if (!shouldRetry) {
@@ -204,17 +208,21 @@ export class ErrorHandler {
 
         // Calculate delay with exponential backoff
         const delay = Math.min(
-          retryConfig.baseDelayMs * Math.pow(retryConfig.multiplier, attempt - 1),
+          retryConfig.baseDelayMs *
+            Math.pow(retryConfig.multiplier, attempt - 1),
           retryConfig.maxDelayMs
         );
 
-        this.logger.warn(`Operation failed, retrying in ${delay}ms (attempt ${attempt}/${retryConfig.maxRetries})`, {
-          error: lastError.message,
-          category,
-          attempt,
-          delay,
-          context,
-        });
+        this.logger.warn(
+          `Operation failed, retrying in ${delay}ms (attempt ${attempt}/${retryConfig.maxRetries})`,
+          {
+            error: lastError.message,
+            category,
+            attempt,
+            delay,
+            context,
+          }
+        );
 
         await DelayUtils.delay(delay);
       }
@@ -378,57 +386,71 @@ export class ErrorHandler {
     const name = error.name.toLowerCase();
 
     // Network-related errors
-    if (message.includes('network') ||
+    if (
+      message.includes('network') ||
       message.includes('connection') ||
       message.includes('timeout') ||
       message.includes('econnreset') ||
       message.includes('enotfound') ||
-      name.includes('networkerror')) {
+      name.includes('networkerror')
+    ) {
       return ErrorCategory.NETWORK;
     }
 
     // Timeout errors
-    if (message.includes('timeout') ||
+    if (
+      message.includes('timeout') ||
       message.includes('timed out') ||
-      name.includes('timeouterror')) {
+      name.includes('timeouterror')
+    ) {
       return ErrorCategory.TIMEOUT;
     }
 
     // Authentication errors
-    if (message.includes('login') ||
+    if (
+      message.includes('login') ||
       message.includes('authentication') ||
       message.includes('unauthorized') ||
-      message.includes('session expired')) {
+      message.includes('session expired')
+    ) {
       return ErrorCategory.AUTHENTICATION;
     }
 
     // Parsing errors
-    if (message.includes('parse') ||
+    if (
+      message.includes('parse') ||
       message.includes('selector') ||
       message.includes('element not found') ||
-      message.includes('cannot read property')) {
+      message.includes('cannot read property')
+    ) {
       return ErrorCategory.PARSING;
     }
 
     // Detection errors
-    if (message.includes('detected') ||
+    if (
+      message.includes('detected') ||
       message.includes('blocked') ||
       message.includes('rate limit') ||
-      message.includes('too many requests')) {
+      message.includes('too many requests')
+    ) {
       return ErrorCategory.DETECTION;
     }
 
     // CAPTCHA errors
-    if (message.includes('captcha') ||
+    if (
+      message.includes('captcha') ||
       message.includes('challenge') ||
-      message.includes('verification')) {
+      message.includes('verification')
+    ) {
       return ErrorCategory.CAPTCHA;
     }
 
     // Configuration errors
-    if (message.includes('config') ||
+    if (
+      message.includes('config') ||
       message.includes('invalid') ||
-      message.includes('missing required')) {
+      message.includes('missing required')
+    ) {
       return ErrorCategory.CONFIGURATION;
     }
 
@@ -436,34 +458,117 @@ export class ErrorHandler {
   }
 
   /**
-   * Determines error severity based on category and context
+   * Determines error severity based on category, error content, and context
+   * Considers retry attempts, error patterns, and session state for dynamic severity assignment
    */
   public determineSeverity(
-    _error: Error,
+    error: Error,
     category: ErrorCategory,
-    _context: Partial<ErrorContext> = {}
+    context: Partial<ErrorContext> = {}
   ): ErrorSeverity {
-    // Fatal errors that require immediate stop
-    if (category === ErrorCategory.CONFIGURATION) {
+    // Base severity from category mapping
+    let baseSeverity = this.getBaseSeverityForCategory(category);
+
+    // Escalate severity based on retry attempts
+    if (context.retryAttempt && context.retryAttempt > 2) {
+      baseSeverity = this.escalateSeverity(baseSeverity);
+    }
+
+    // Analyze error message for severity hints
+    const messageSeverity = this.analyzeSeverityFromMessage(error.message);
+    if (messageSeverity > baseSeverity) {
+      baseSeverity = messageSeverity;
+    }
+
+    // Context-specific adjustments
+    if (context.sessionId && this.isSessionCritical(context)) {
+      baseSeverity = this.escalateSeverity(baseSeverity);
+    }
+
+    return baseSeverity;
+  }
+
+  /**
+   * Gets base severity for error category
+   */
+  private getBaseSeverityForCategory(category: ErrorCategory): ErrorSeverity {
+    const severityMap: Record<ErrorCategory, ErrorSeverity> = {
+      [ErrorCategory.CONFIGURATION]: ErrorSeverity.FATAL,
+      [ErrorCategory.DETECTION]: ErrorSeverity.HIGH,
+      [ErrorCategory.CAPTCHA]: ErrorSeverity.HIGH,
+      [ErrorCategory.AUTHENTICATION]: ErrorSeverity.HIGH,
+      [ErrorCategory.NETWORK]: ErrorSeverity.MEDIUM,
+      [ErrorCategory.TIMEOUT]: ErrorSeverity.MEDIUM,
+      [ErrorCategory.APPLICATION]: ErrorSeverity.MEDIUM,
+      [ErrorCategory.PARSING]: ErrorSeverity.LOW,
+      [ErrorCategory.UNKNOWN]: ErrorSeverity.LOW,
+    };
+
+    return severityMap[category] || ErrorSeverity.LOW;
+  }
+
+  /**
+   * Escalates severity to the next level
+   */
+  private escalateSeverity(currentSeverity: ErrorSeverity): ErrorSeverity {
+    const escalationMap: Record<ErrorSeverity, ErrorSeverity> = {
+      [ErrorSeverity.LOW]: ErrorSeverity.MEDIUM,
+      [ErrorSeverity.MEDIUM]: ErrorSeverity.HIGH,
+      [ErrorSeverity.HIGH]: ErrorSeverity.FATAL,
+      [ErrorSeverity.FATAL]: ErrorSeverity.FATAL, // Cannot escalate further
+    };
+
+    return escalationMap[currentSeverity];
+  }
+
+  /**
+   * Analyzes error message for severity indicators
+   */
+  private analyzeSeverityFromMessage(message: string): ErrorSeverity {
+    const lowerMessage = message.toLowerCase();
+
+    // Fatal indicators
+    if (
+      lowerMessage.includes('fatal') ||
+      lowerMessage.includes('critical') ||
+      lowerMessage.includes('unrecoverable')
+    ) {
       return ErrorSeverity.FATAL;
     }
 
-    // High severity errors requiring intervention
-    if (category === ErrorCategory.DETECTION ||
-      category === ErrorCategory.CAPTCHA ||
-      category === ErrorCategory.AUTHENTICATION) {
+    // High severity indicators
+    if (
+      lowerMessage.includes('blocked') ||
+      lowerMessage.includes('banned') ||
+      lowerMessage.includes('suspended') ||
+      lowerMessage.includes('access denied')
+    ) {
       return ErrorSeverity.HIGH;
     }
 
-    // Medium severity for recoverable errors
-    if (category === ErrorCategory.NETWORK ||
-      category === ErrorCategory.TIMEOUT ||
-      category === ErrorCategory.APPLICATION) {
+    // Medium severity indicators
+    if (
+      lowerMessage.includes('failed') ||
+      lowerMessage.includes('error') ||
+      lowerMessage.includes('unable')
+    ) {
       return ErrorSeverity.MEDIUM;
     }
 
-    // Low severity for minor issues
     return ErrorSeverity.LOW;
+  }
+
+  /**
+   * Determines if the current session context indicates critical state
+   */
+  private isSessionCritical(context: Partial<ErrorContext>): boolean {
+    // Consider session critical if we have multiple error indicators
+    return Boolean(
+      context.retryAttempt &&
+        context.retryAttempt > 1 &&
+        context.jobId && // We're in the middle of processing a job
+        (context.url?.includes('linkedin.com') || context.selector) // We're on LinkedIn
+    );
   }
 
   /**
@@ -474,7 +579,8 @@ export class ErrorHandler {
     context: Partial<ErrorContext> = {}
   ): LinkedInBotError {
     const category = context.category || this.categorizeError(error);
-    const severity = context.severity || this.determineSeverity(error, category, context);
+    const severity =
+      context.severity || this.determineSeverity(error, category, context);
 
     const enhancedContext: ErrorContext = {
       category,
@@ -509,9 +615,10 @@ export class ErrorHandler {
       );
 
       // Only use fallback for non-critical errors
-      if (enhancedError.context.severity === ErrorSeverity.LOW ||
-        enhancedError.context.severity === ErrorSeverity.MEDIUM) {
-
+      if (
+        enhancedError.context.severity === ErrorSeverity.LOW ||
+        enhancedError.context.severity === ErrorSeverity.MEDIUM
+      ) {
         this.logger.warn('Primary operation failed, attempting fallback', {
           error: enhancedError.message,
           category: enhancedError.context.category,
@@ -523,7 +630,10 @@ export class ErrorHandler {
         } catch (fallbackError) {
           this.logger.error('Fallback operation also failed', {
             primaryError: enhancedError.message,
-            fallbackError: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+            fallbackError:
+              fallbackError instanceof Error
+                ? fallbackError.message
+                : String(fallbackError),
             context: enhancedError.context,
           });
           throw enhancedError; // Throw original error
@@ -572,7 +682,9 @@ export class ErrorHandler {
         // Reset failure count on success
         if (failures > 0) {
           failures = 0;
-          this.logger.info('Circuit breaker - operation succeeded, resetting failure count');
+          this.logger.info(
+            'Circuit breaker - operation succeeded, resetting failure count'
+          );
         }
 
         return result;
@@ -582,7 +694,9 @@ export class ErrorHandler {
 
         if (failures >= failureThreshold) {
           isOpen = true;
-          this.logger.error(`Circuit breaker opened after ${failures} failures`);
+          this.logger.error(
+            `Circuit breaker opened after ${failures} failures`
+          );
         }
 
         throw error;
@@ -602,7 +716,7 @@ export class ErrorHandler {
       nonRetryable: 0,
     };
 
-    errors.forEach(error => {
+    errors.forEach((error) => {
       const { category, severity } = error.context;
 
       stats.byCategory[category] = (stats.byCategory[category] || 0) + 1;

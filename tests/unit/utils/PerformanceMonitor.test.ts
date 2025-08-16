@@ -49,7 +49,7 @@ describe('PerformanceMonitor', () => {
             performanceMonitor.endTimer('test-operation', { success: true });
 
             const report = performanceMonitor.getReport();
-            expect(report.metrics[0].metadata).toEqual({
+            expect(report.metrics[0]?.metadata).toEqual({
                 ...metadata,
                 success: true
             });
@@ -71,8 +71,8 @@ describe('PerformanceMonitor', () => {
 
             const report = performanceMonitor.getReport();
             expect(report.metrics).toHaveLength(1);
-            expect(report.metrics[0].name).toBe('async-operation');
-            expect(report.metrics[0].metadata?.success).toBe(true);
+            expect(report.metrics[0]?.name).toBe('async-operation');
+            expect(report.metrics[0]?.metadata?.['success']).toBe(true);
         });
 
         it('should time failed operation', async () => {
@@ -83,8 +83,8 @@ describe('PerformanceMonitor', () => {
             ).rejects.toThrow('Test error');
 
             const report = performanceMonitor.getReport();
-            expect(report.metrics[0].metadata?.success).toBe(false);
-            expect(report.metrics[0].metadata?.error).toBe('Test error');
+            expect(report.metrics[0]?.metadata?.['success']).toBe(false);
+            expect(report.metrics[0]?.metadata?.['error']).toBe('Test error');
         });
     });
 
@@ -100,8 +100,8 @@ describe('PerformanceMonitor', () => {
             expect(result).toBe('loaded');
 
             const report = performanceMonitor.getReport();
-            expect(report.metrics[0].metadata?.type).toBe('page_load');
-            expect(report.metrics[0].metadata?.url).toBe('https://example.com');
+            expect(report.metrics[0]?.metadata?.['type']).toBe('page_load');
+            expect(report.metrics[0]?.metadata?.['url']).toBe('https://example.com');
         });
 
         it('should time selector wait operation', async () => {
@@ -115,8 +115,8 @@ describe('PerformanceMonitor', () => {
             expect(result).toBe('found');
 
             const report = performanceMonitor.getReport();
-            expect(report.metrics[0].metadata?.type).toBe('selector_wait');
-            expect(report.metrics[0].metadata?.selector).toBe('.test-selector');
+            expect(report.metrics[0]?.metadata?.['type']).toBe('selector_wait');
+            expect(report.metrics[0]?.metadata?.['selector']).toBe('.test-selector');
         });
     });
 

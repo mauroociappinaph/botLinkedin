@@ -261,9 +261,9 @@ describe('Logger', () => {
             const logEntry = JSON.parse(sessionCompletedCall[0]);
             expect(logEntry.message).toBe('Session completed');
             expect(logEntry.sessionId).toBe(sessionId);
-            expect(logEntry.summary.jobsProcessed).toBe(10);
-            expect(logEntry.summary.applicationsSubmitted).toBe(7);
-            expect(logEntry.summary.successRate).toBe('70%');
+            expect(logEntry.context.summary.jobsProcessed).toBe(10);
+            expect(logEntry.context.summary.applicationsSubmitted).toBe(7);
+            expect(logEntry.context.summary.successRate).toBe('70%');
 
             // Session should be removed after ending
             expect(logger.getSessionStats(sessionId)).toBeNull();
@@ -432,7 +432,7 @@ describe('Logger', () => {
             circularObj.self = circularObj;
 
             // Should not throw
-            expect(() => logger.info('Test with circular ref', circularObj)).not.toThrow();
+            expect(() => logger.info('Test with circular ref', circularObj as Record<string, unknown>)).not.toThrow();
 
             const logCall = consoleInfoSpy.mock.calls[0][0];
             expect(logCall).toContain('[Circular Reference]');
