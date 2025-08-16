@@ -58,6 +58,15 @@ export class DelayUtils {
   }
 
   /**
+   * Alias for delay method for better readability
+   * @param ms Delay in milliseconds
+   * @returns Promise that resolves after the delay
+   */
+  public static async sleep(ms: number): Promise<void> {
+    return DelayUtils.delay(ms);
+  }
+
+  /**
    * Creates delays appropriate for page loading with realistic variation
    * @param minMs Minimum delay (defaults to configured page load min)
    * @param maxMs Maximum delay (defaults to configured page load max)

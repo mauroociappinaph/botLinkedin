@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import { LogLevel } from '../types';
 
 export { LogLevel };
@@ -15,12 +17,32 @@ export enum LogFormat {
  */
 export interface LoggerConfig {
   level: LogLevel;
-  format: LogFormat;
+  format?: LogFormat;
+  enableFileLogging?: boolean;
+  logDirectory?: string;
+  maxFileSize?: number; // in MB
+  maxFiles?: number;
+  excludeSensitive?: boolean;
 }
 
 /**
- * Basic logging service for SessionManager requirements
- * Full implementation will be completed in task 10
+ * Session statistics for monitoring
+ */
+export interface SessionStats {
+  sessionId: string;
+  startTime: Date;
+  endTime?: Date;
+  jobsProcessed: number;
+  applicationsSubmitted: number;
+  duplicatesSkipped: number;
+  errorsEncountered: number;
+  captchasChallenged: number;
+  averageProcessingTime?: number;
+}
+
+/**
+ * Comprehensive logging service with file rotation and monitoring capabilities
+ * Supports multiple output levels, file-based logging, and session reporting
  */
 export class Logger {
   private static readonly LOG_LEVEL_PRIORITY = {
@@ -30,17 +52,52 @@ export class Logger {
     [LogLevel.ERROR]: 3,
   } as const;
 
+  private static readonly SENSITIVE_FIELDS = [
+    'password',
+    'credentials',
+    'token',
+    'cookie',
+    'session',
+    'auth',
+    'secret',
+  ];
+
+  private static readonly DEFAULT_MAX_FILE_SIZE = 10; // MB
+  private static readonly DEFAULT_MAX_FILES = 5;
+  private static readonly DEFAULT_LOG_DIR = 'logs';
+
   private logLevel: LogLevel;
   private format: LogFormat;
+  private enableFileLogging: boolean;
+  private logDirectory: string;
+  private maxFileSize: number;
+  private maxFiles: number;
+  private excludeSensitive: boolean;
+  private currentLogFile?: string;
+  private sessionStats: Map<string, SessionStats> = new Map();
 
   constructor(config: LoggerConfig | LogLevel = LogLevel.INFO) {
     if (typeof config === 'string') {
       // Backward compatibility: accept LogLevel directly
       this.logLevel = config;
       this.format = LogFormat.PLAIN;
+      this.enableFileLogging = false;
+      this.logDirectory = Logger.DEFAULT_LOG_DIR;
+      this.maxFileSize = Logger.DEFAULT_MAX_FILE_SIZE;
+      this.maxFiles = Logger.DEFAULT_MAX_FILES;
+      this.excludeSensitive = true;
     } else {
       this.logLevel = config.level;
       this.format = config.format ?? LogFormat.PLAIN;
+      this.enableFileLogging = config.enableFileLogging ?? false;
+      this.logDirectory = config.logDirectory ?? Logger.DEFAULT_LOG_DIR;
+      this.maxFileSize = config.maxFileSize ?? Logger.DEFAULT_MAX_FILE_SIZE;
+      this.maxFiles = config.maxFiles ?? Logger.DEFAULT_MAX_FILES;
+      this.excludeSensitive = config.excludeSensitive ?? true;
+    }
+
+    if (this.enableFileLogging) {
+      this.initializeFileLogging();
     }
   }
 
@@ -49,6 +106,22 @@ export class Logger {
    */
   public static createDebugLogger(format: LogFormat = LogFormat.PLAIN): Logger {
     return new Logger({ level: LogLevel.DEBUG, format });
+  }
+
+  /**
+   * Creates a logger with file logging enabled for production use
+   */
+  public static createFileLogger(
+    level: LogLevel = LogLevel.INFO,
+    logDirectory?: string
+  ): Logger {
+    return new Logger({
+      level,
+      format: LogFormat.JSON,
+      enableFileLogging: true,
+      logDirectory: logDirectory || Logger.DEFAULT_LOG_DIR,
+      excludeSensitive: true,
+    });
   }
 
   /**
@@ -166,6 +239,161 @@ export class Logger {
   }
 
   /**
+   * Starts tracking a new session
+   * @param sessionId Unique session identifier
+   * @returns Session stats object for tracking
+   */
+  public startSession(sessionId: string): SessionStats {
+    const stats: SessionStats = {
+      sessionId,
+      startTime: new Date(),
+      jobsProcessed: 0,
+      applicationsSubmitted: 0,
+      duplicatesSkipped: 0,
+      errorsEncountered: 0,
+      captchasChallenged: 0,
+    };
+
+    this.sessionStats.set(sessionId, stats);
+    this.info('Session started', { sessionId, startTime: stats.startTime });
+    return stats;
+  }
+
+  /**
+   * Updates session statistics
+   * @param sessionId Session identifier
+   * @param updates Partial updates to apply
+   */
+  public updateSession(
+    sessionId: string,
+    updates: Partial<Omit<SessionStats, 'sessionId' | 'startTime'>>
+  ): void {
+    const stats = this.sessionStats.get(sessionId);
+    if (stats) {
+      Object.assign(stats, updates);
+      this.debug('Session updated', { sessionId, updates });
+    }
+  }
+
+  /**
+   * Ends a session and generates summary report
+   * @param sessionId Session identifier
+   * @returns Final session statistics
+   */
+  public endSession(sessionId: string): SessionStats | null {
+    const stats = this.sessionStats.get(sessionId);
+    if (!stats) {
+      this.warn('Attempted to end non-existent session', { sessionId });
+      return null;
+    }
+
+    stats.endTime = new Date();
+    const duration = stats.endTime.getTime() - stats.startTime.getTime();
+    stats.averageProcessingTime = stats.jobsProcessed > 0
+      ? duration / stats.jobsProcessed
+      : 0;
+
+    this.generateSessionReport(stats);
+    this.sessionStats.delete(sessionId);
+    return stats;
+  }
+
+  /**
+   * Gets current session statistics
+   * @param sessionId Session identifier
+   * @returns Current session stats or null if not found
+   */
+  public getSessionStats(sessionId: string): SessionStats | null {
+    return this.sessionStats.get(sessionId) || null;
+  }
+
+  /**
+   * Logs job processing activity
+   * @param sessionId Session identifier
+   * @param jobId Job identifier
+   * @param action Action performed
+   * @param context Additional context
+   */
+  public logJobActivity(
+    sessionId: string,
+    jobId: string,
+    action: string,
+    context?: Record<string, unknown>
+  ): void {
+    const sanitizedContext = this.excludeSensitive
+      ? this.sanitizeContext(context)
+      : context;
+
+    this.info(`Job ${action}`, {
+      sessionId,
+      jobId,
+      action,
+      ...sanitizedContext,
+    });
+  }
+
+  /**
+   * Logs application activity
+   * @param sessionId Session identifier
+   * @param jobId Job identifier
+   * @param success Whether application was successful
+   * @param context Additional context
+   */
+  public logApplication(
+    sessionId: string,
+    jobId: string,
+    success: boolean,
+    context?: Record<string, unknown>
+  ): void {
+    const sanitizedContext = this.excludeSensitive
+      ? this.sanitizeContext(context)
+      : context;
+
+    const level = success ? LogLevel.INFO : LogLevel.WARN;
+    const message = success ? 'Application submitted' : 'Application failed';
+
+    this.log(level, message, {
+      sessionId,
+      jobId,
+      success,
+      ...sanitizedContext,
+    });
+
+    // Update session stats
+    this.updateSession(sessionId, {
+      applicationsSubmitted: success
+        ? (this.getSessionStats(sessionId)?.applicationsSubmitted || 0) + 1
+        : (this.getSessionStats(sessionId)?.applicationsSubmitted || 0),
+      errorsEncountered: success
+        ? (this.getSessionStats(sessionId)?.errorsEncountered || 0)
+        : (this.getSessionStats(sessionId)?.errorsEncountered || 0) + 1,
+    });
+  }
+
+  /**
+   * Logs CAPTCHA challenge
+   * @param sessionId Session identifier
+   * @param type CAPTCHA type
+   * @param resolved Whether it was resolved
+   */
+  public logCaptcha(
+    sessionId: string,
+    type: string,
+    resolved: boolean
+  ): void {
+    this.warn('CAPTCHA challenge encountered', {
+      sessionId,
+      type,
+      resolved,
+      timestamp: new Date(),
+    });
+
+    this.updateSession(sessionId, {
+      captchasChallenged: (this.getSessionStats(sessionId)?.captchasChallenged || 0) + 1,
+    });
+  }
+
+  /**
    * Internal logging method
    * @param level Log level
    * @param message Message to log
@@ -181,25 +409,264 @@ export class Logger {
       return;
     }
 
-    const logMessage = this.formatMessage(level, message, context);
+    const sanitizedContext = this.excludeSensitive
+      ? this.sanitizeContext(context)
+      : context;
 
-    // Use appropriate console method based on log level
+    const logMessage = this.formatMessage(level, message, sanitizedContext);
+
+    // Console output
+    this.outputToConsole(level, logMessage);
+
+    // File output if enabled
+    if (this.enableFileLogging) {
+      this.outputToFile(logMessage);
+    }
+  }
+
+  /**
+   * Outputs log message to console
+   * @param level Log level
+   * @param message Formatted message
+   */
+  private outputToConsole(level: LogLevel, message: string): void {
     switch (level) {
       case LogLevel.ERROR:
         // eslint-disable-next-line no-console
-        console.error(logMessage);
+        console.error(message);
         break;
       case LogLevel.WARN:
         // eslint-disable-next-line no-console
-        console.warn(logMessage);
+        console.warn(message);
         break;
       case LogLevel.DEBUG:
         // eslint-disable-next-line no-console
-        console.debug(logMessage);
+        console.debug(message);
         break;
       default:
         // eslint-disable-next-line no-console
-        console.info(logMessage);
+        console.info(message);
+    }
+  }
+
+  /**
+   * Outputs log message to file
+   * @param message Formatted message
+   */
+  private outputToFile(message: string): void {
+    try {
+      if (!this.currentLogFile) {
+        this.currentLogFile = this.createLogFile();
+      }
+
+      // Check if current file needs rotation
+      if (this.shouldRotateFile()) {
+        this.rotateLogFile();
+        this.currentLogFile = this.createLogFile();
+      }
+
+      fs.appendFileSync(this.currentLogFile, message + '\n', 'utf8');
+    } catch (error) {
+      // Fallback to console if file logging fails
+      // eslint-disable-next-line no-console
+      console.error('Failed to write to log file:', error);
+    }
+  }
+
+  /**
+   * Initializes file logging system
+   */
+  private initializeFileLogging(): void {
+    try {
+      // Create log directory if it doesn't exist
+      if (!fs.existsSync(this.logDirectory)) {
+        fs.mkdirSync(this.logDirectory, { recursive: true });
+      }
+
+      // Clean up old log files if needed
+      this.cleanupOldLogFiles();
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to initialize file logging:', error);
+      this.enableFileLogging = false;
+    }
+  }
+
+  /**
+   * Creates a new log file with timestamp
+   * @returns Path to the new log file
+   */
+  private createLogFile(): string {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `linkedin-bot-${timestamp}.log`;
+    return path.join(this.logDirectory, filename);
+  }
+
+  /**
+   * Checks if current log file should be rotated
+   * @returns True if file should be rotated
+   */
+  private shouldRotateFile(): boolean {
+    if (!this.currentLogFile || !fs.existsSync(this.currentLogFile)) {
+      return false;
+    }
+
+    try {
+      const stats = fs.statSync(this.currentLogFile);
+      const fileSizeMB = stats.size / (1024 * 1024);
+      return fileSizeMB >= this.maxFileSize;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Rotates the current log file
+   */
+  private rotateLogFile(): void {
+    if (!this.currentLogFile) return;
+
+    try {
+      // Archive current file with rotation suffix
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const archivedName = this.currentLogFile.replace('.log', `-archived-${timestamp}.log`);
+      fs.renameSync(this.currentLogFile, archivedName);
+
+      // Clean up old files after rotation
+      this.cleanupOldLogFiles();
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to rotate log file:', error);
+    }
+  }
+
+  /**
+   * Cleans up old log files based on maxFiles setting
+   */
+  private cleanupOldLogFiles(): void {
+    try {
+      const files = fs.readdirSync(this.logDirectory)
+        .filter((file: string) => file.endsWith('.log'))
+        .map((file: string) => ({
+          name: file,
+          path: path.join(this.logDirectory, file),
+          mtime: fs.statSync(path.join(this.logDirectory, file)).mtime,
+        }))
+        .sort((a: any, b: any) => b.mtime.getTime() - a.mtime.getTime());
+
+      // Remove files beyond maxFiles limit
+      if (files.length > this.maxFiles) {
+        const filesToDelete = files.slice(this.maxFiles);
+        filesToDelete.forEach((file: any) => {
+          try {
+            fs.unlinkSync(file.path);
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error(`Failed to delete old log file ${file.name}:`, error);
+          }
+        });
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to cleanup old log files:', error);
+    }
+  }
+
+  /**
+   * Sanitizes context object to remove sensitive information
+   * @param context Context object to sanitize
+   * @param seen Set to track circular references
+   * @returns Sanitized context object
+   */
+  private sanitizeContext(
+    context?: Record<string, unknown>,
+    seen: WeakSet<object> = new WeakSet()
+  ): Record<string, unknown> | undefined {
+    if (!context) return context;
+
+    // Handle circular references
+    if (seen.has(context)) {
+      return { '[Circular Reference]': true };
+    }
+    seen.add(context);
+
+    const sanitized: Record<string, unknown> = {};
+
+    for (const [key, value] of Object.entries(context)) {
+      const lowerKey = key.toLowerCase();
+      const isSensitive = Logger.SENSITIVE_FIELDS.some(field =>
+        lowerKey.includes(field)
+      );
+
+      if (isSensitive) {
+        sanitized[key] = '[REDACTED]';
+      } else if (typeof value === 'object' && value !== null) {
+        // Recursively sanitize nested objects
+        sanitized[key] = this.sanitizeContext(value as Record<string, unknown>, seen);
+      } else {
+        sanitized[key] = value;
+      }
+    }
+
+    return sanitized;
+  }
+
+  /**
+   * Generates a comprehensive session report
+   * @param stats Session statistics
+   */
+  private generateSessionReport(stats: SessionStats): void {
+    const duration = stats.endTime
+      ? stats.endTime.getTime() - stats.startTime.getTime()
+      : 0;
+
+    const report = {
+      sessionId: stats.sessionId,
+      duration: `${Math.round(duration / 1000)}s`,
+      summary: {
+        jobsProcessed: stats.jobsProcessed,
+        applicationsSubmitted: stats.applicationsSubmitted,
+        duplicatesSkipped: stats.duplicatesSkipped,
+        errorsEncountered: stats.errorsEncountered,
+        captchasChallenged: stats.captchasChallenged,
+        successRate: stats.jobsProcessed > 0
+          ? `${Math.round((stats.applicationsSubmitted / stats.jobsProcessed) * 100)}%`
+          : '0%',
+        averageProcessingTime: stats.averageProcessingTime
+          ? `${Math.round(stats.averageProcessingTime)}ms`
+          : 'N/A',
+      },
+      startTime: stats.startTime.toISOString(),
+      endTime: stats.endTime?.toISOString(),
+    };
+
+    this.info('Session completed', report);
+
+    // Also write detailed report to file if file logging is enabled
+    if (this.enableFileLogging) {
+      this.writeSessionReportToFile(report);
+    }
+  }
+
+  /**
+   * Writes detailed session report to a separate file
+   * @param report Session report data
+   */
+  private writeSessionReportToFile(report: any): void {
+    try {
+      const reportFile = path.join(
+        this.logDirectory,
+        `session-report-${report.sessionId}.json`
+      );
+
+      fs.writeFileSync(
+        reportFile,
+        JSON.stringify(report, null, 2),
+        'utf8'
+      );
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to write session report:', error);
     }
   }
 
