@@ -4,6 +4,7 @@ import {
   NavigationError,
   SearchError,
 } from '../errors/LinkedInErrors';
+import { BooleanSearchBuilder } from '../search/BooleanSearchBuilder';
 import {
   JobPosting,
   JobSearchConfig,
@@ -45,6 +46,7 @@ export class JobSearchHandler {
   private readonly performanceMonitor: PerformanceMonitor;
   private readonly circuitBreaker: CircuitBreaker;
   private readonly jobParser: JobPostingParser;
+  private readonly booleanSearchBuilder: BooleanSearchBuilder;
 
   // Enhanced configuration constants
   private static readonly CONFIG = {
@@ -66,34 +68,25 @@ export class JobSearchHandler {
     },
   } as const;
 
-  // Cached selectors for better performance
-  private static readonly CACHED_SELECTORS = {
-    SEARCH_INPUT: LinkedInSelectors.SELECTORS.SEARCH_INPUT,
-    LOCATION_INPUT: LinkedInSelectors.SELECTORS.LOCATION_INPUT,
-    SEARCH_BUTTON: LinkedInSelectors.SELECTORS.SEARCH_BUTTON,
-    JOB_CARD: LinkedInSelectors.SELECTORS.JOB_CARD,
-    JOB_RESULTS_LIST: LinkedInSelectors.SELECTORS.JOB_RESULTS_LIST,
-    FILTERS_BUTTON: LinkedInSelectors.SELECTORS.FILTERS_BUTTON,
-    APPLY_FILTERS_BUTTON: LinkedInSelectors.SELECTORS.APPLY_FILTERS_BUTTON,
-    NEXT_PAGE_BUTTON: LinkedInSelectors.SELECTORS.NEXT_PAGE_BUTTON,
-    RESULTS_COUNT: LinkedInSelectors.SELECTORS.RESULTS_COUNT,
-    JOB_TITLE: LinkedInSelectors.SELECTORS.JOB_TITLE,
-    JOB_COMPANY: LinkedInSelectors.SELECTORS.JOB_COMPANY,
-    JOB_LOCATION: LinkedInSelectors.SELECTORS.JOB_LOCATION,
-    EASY_APPLY_BUTTON: LinkedInSelectors.SELECTORS.EASY_APPLY_BUTTON,
-    NO_RESULTS: LinkedInSelectors.SELECTORS.NO_RESULTS,
-    LOADING_SPINNER: LinkedInSelectors.SELECTORS.LOADING_SPINNER,
-  } as const;
-
+  // Use LinkedInSelectors directly to avoid duplication
+  private static readonly SELECTORS = LinkedInSelectors.SELECTORS;
   private static readonly FILTER_VALUES = LinkedInSelectors.FILTER_VALUES;
 
   constructor(page: Page, searchConfig: JobSearchConfig, logger?: Logger) {
+    if (!page) {
+      throw new Error('Page instance is required for JobSearchHandler');
+    }
+    if (!searchConfig) {
+      throw new Error('Search configuration is required for JobSearchHandler');
+    }
+
     this.page = page;
     this.searchConfig = searchConfig;
     this.logger = logger || new Logger(LogLevel.INFO);
     this.performanceMonitor = new PerformanceMonitor(this.logger);
     this.circuitBreaker = CircuitBreaker.forLinkedIn(this.logger);
     this.jobParser = new JobPostingParser(this.page, this.logger);
+    this.booleanSearchBuilder = new BooleanSearchBuilder(this.logger);
   }
 
   // ============================================================================
@@ -192,6 +185,63 @@ export class JobSearchHandler {
   // ============================================================================
 
   /**
+   * Builds the search query using boolean search if enabled, otherwise falls back to keywords
+   */
+  private buildSearchQuery(): string {
+    if (this.searchConfig.booleanSearch?.enabled) {
+      this.logger.debug('Building boolean search query', {
+        expression: this.searchConfig.booleanSearch.expression,
+        hasExpression: !!this.searchConfig.booleanSearch.expression,
+        fallbackKeywords: this.searchConfig.keywords,
+      });
+
+      try {
+        const query = this.booleanSearchBuilder.buildSearchQuery({
+          enabled: true,
+          expression: this.searchConfig.booleanSearch.expression || '',
+          fallbackKeywords: this.searchConfig.keywords,
+          validateSyntax:
+            this.searchConfig.booleanSearch.validateSyntax ?? true,
+        });
+
+        if (!query || query.trim().length === 0) {
+          this.logger.warn(
+            'Boolean search returned empty query, falling back to keywords'
+          );
+          return this.buildFallbackQuery();
+        }
+
+        return query;
+      } catch (error) {
+        this.logger.warn('Boolean search failed, falling back to keywords', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return this.buildFallbackQuery();
+      }
+    }
+
+    return this.buildFallbackQuery();
+  }
+
+  /**
+   * Builds fallback query from keywords
+   */
+  private buildFallbackQuery(): string {
+    this.logger.debug('Using traditional keyword search', {
+      keywords: this.searchConfig.keywords,
+    });
+
+    if (
+      !this.searchConfig.keywords ||
+      this.searchConfig.keywords.length === 0
+    ) {
+      throw new Error('No keywords available for search query');
+    }
+
+    return this.searchConfig.keywords.join(' OR ');
+  }
+
+  /**
    * Executes the main search workflow steps
    */
   private async executeSearchWorkflow(): Promise<void> {
@@ -220,13 +270,22 @@ export class JobSearchHandler {
   }
 
   /**
-   * Creates an error response with proper typing
+   * Creates an error response with proper typing and consistent error handling
    */
   private createErrorResponse(
     code: ErrorCode,
     message: string,
-    recoverable: boolean = true
+    recoverable: boolean = true,
+    originalError?: Error
   ): ServiceResponse<SearchResult<JobPosting>> {
+    // Log the error for debugging
+    this.logger.error(`JobSearchHandler error: ${code}`, {
+      message,
+      recoverable,
+      originalError: originalError?.message,
+      stack: originalError?.stack,
+    });
+
     return {
       success: false,
       error: {
@@ -244,41 +303,65 @@ export class JobSearchHandler {
   private handleSearchError(
     error: unknown
   ): ServiceResponse<SearchResult<JobPosting>> {
-    const errorMessage =
-      error instanceof Error ? error.message : 'Unknown error';
+    const originalError =
+      error instanceof Error ? error : new Error(String(error));
+    const errorMessage = originalError.message;
 
-    this.logger.error('Job search failed', {
-      error: errorMessage,
-      errorType: error?.constructor?.name,
-      searchConfig: this.searchConfig,
-    });
-
-    // Handle specific error types
+    // Handle specific error types with appropriate recovery strategies
     if (error instanceof NavigationError) {
-      return this.createErrorResponse('NAVIGATION_FAILED', errorMessage, false);
+      return this.createErrorResponse(
+        'NAVIGATION_FAILED',
+        errorMessage,
+        false,
+        originalError
+      );
     }
 
     if (error instanceof SearchError) {
       return this.createErrorResponse(
         'SEARCH_FAILED',
         errorMessage,
-        error.recoverable
+        error.recoverable,
+        originalError
       );
     }
 
     if (error instanceof ExtractionError) {
-      return this.createErrorResponse('EXTRACTION_FAILED', errorMessage, true);
+      return this.createErrorResponse(
+        'EXTRACTION_FAILED',
+        errorMessage,
+        true,
+        originalError
+      );
     }
 
-    if (error instanceof Error && error.message.includes('timeout')) {
-      return this.createErrorResponse('TIMEOUT_ERROR', errorMessage, true);
+    if (errorMessage.includes('timeout')) {
+      return this.createErrorResponse(
+        'TIMEOUT_ERROR',
+        errorMessage,
+        true,
+        originalError
+      );
+    }
+
+    if (
+      errorMessage.includes('authentication') ||
+      errorMessage.includes('login')
+    ) {
+      return this.createErrorResponse(
+        'AUTHENTICATION_ERROR',
+        errorMessage,
+        false,
+        originalError
+      );
     }
 
     // Default error handling
     return this.createErrorResponse(
       'SEARCH_FAILED',
       errorMessage,
-      !(error instanceof NavigationError)
+      !(error instanceof NavigationError),
+      originalError
     );
   }
 
@@ -306,14 +389,33 @@ export class JobSearchHandler {
             timeout: JobSearchHandler.CONFIG.TIMEOUTS.PAGE_LOAD,
           });
 
+          // Check if we're redirected to login page
+          const currentUrl = this.page.url();
+          if (
+            currentUrl.includes('/login') ||
+            currentUrl.includes('/checkpoint')
+          ) {
+            throw new NavigationError(
+              'Redirected to login page - authentication required. Please ensure you are logged in to LinkedIn.'
+            );
+          }
+
           // Wait for the search form to be available with fallback selectors
           const searchSelector = await LinkedInSelectors.getWorkingSelector(
             this.page,
-            JobSearchHandler.CACHED_SELECTORS.SEARCH_INPUT,
+            JobSearchHandler.SELECTORS.SEARCH_INPUT,
             [...LinkedInSelectors.FALLBACK_SELECTORS.SEARCH_INPUT]
           );
 
           if (!searchSelector) {
+            // Additional check for login requirement
+            const loginRequired = await this.checkIfLoginRequired();
+            if (loginRequired) {
+              throw new NavigationError(
+                'LinkedIn login required to access jobs page. Please log in first.'
+              );
+            }
+
             throw new NavigationError(
               'Search input not found on LinkedIn jobs page'
             );
@@ -348,6 +450,38 @@ export class JobSearchHandler {
   }
 
   /**
+   * Checks if login is required by looking for login-specific elements
+   */
+  private async checkIfLoginRequired(): Promise<boolean> {
+    try {
+      // Check for login form elements
+      const loginSelectors = [
+        '#username',
+        'input[name="session_key"]',
+        '.login-form',
+        '.sign-in-form',
+      ];
+
+      for (const selector of loginSelectors) {
+        try {
+          await this.page.waitForSelector(selector, { timeout: 1000 });
+          return true;
+        } catch {
+          // Continue checking
+        }
+      }
+
+      // Check for "Sign in" buttons or links
+      const signInElements = await this.page.$$(
+        'a[href*="/login"], button:contains("Sign in")'
+      );
+      return signInElements.length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Applies basic search parameters (keywords and location) with performance monitoring
    */
   private async applySearchParameters(): Promise<void> {
@@ -364,15 +498,16 @@ export class JobSearchHandler {
         location: this.searchConfig.location,
       });
 
-      // Apply keywords
+      // Apply keywords (with boolean search support)
+      const searchQuery = this.buildSearchQuery();
       await this.fillSearchInput(
-        JobSearchHandler.CACHED_SELECTORS.SEARCH_INPUT,
-        this.searchConfig.keywords.join(' ')
+        JobSearchHandler.SELECTORS.SEARCH_INPUT,
+        searchQuery
       );
 
       // Apply location
       await this.fillSearchInput(
-        JobSearchHandler.CACHED_SELECTORS.LOCATION_INPUT,
+        JobSearchHandler.SELECTORS.LOCATION_INPUT,
         this.searchConfig.location
       );
 
@@ -428,11 +563,11 @@ export class JobSearchHandler {
    */
   private async executeSearch(): Promise<void> {
     try {
-      await this.page.click(JobSearchHandler.CACHED_SELECTORS.SEARCH_BUTTON);
+      await this.page.click(JobSearchHandler.SELECTORS.SEARCH_BUTTON);
 
       // Wait for results to load
       await this.page.waitForSelector(
-        JobSearchHandler.CACHED_SELECTORS.JOB_RESULTS_LIST,
+        JobSearchHandler.SELECTORS.JOB_RESULTS_LIST,
         {
           timeout: JobSearchHandler.CONFIG.TIMEOUTS.RESULTS_WAIT,
         }
@@ -493,13 +628,10 @@ export class JobSearchHandler {
    * Opens the filters panel
    */
   private async openFiltersPanel(): Promise<void> {
-    await this.page.waitForSelector(
-      JobSearchHandler.CACHED_SELECTORS.FILTERS_BUTTON,
-      {
-        timeout: JobSearchHandler.CONFIG.TIMEOUTS.FILTER_WAIT,
-      }
-    );
-    await this.page.click(JobSearchHandler.CACHED_SELECTORS.FILTERS_BUTTON);
+    await this.page.waitForSelector(JobSearchHandler.SELECTORS.FILTERS_BUTTON, {
+      timeout: JobSearchHandler.CONFIG.TIMEOUTS.FILTER_WAIT,
+    });
+    await this.page.click(JobSearchHandler.SELECTORS.FILTERS_BUTTON);
     await DelayUtils.randomDelay(1000, 2000);
   }
 
@@ -533,18 +665,16 @@ export class JobSearchHandler {
    */
   private async submitFilters(): Promise<void> {
     await this.page.waitForSelector(
-      JobSearchHandler.CACHED_SELECTORS.APPLY_FILTERS_BUTTON,
+      JobSearchHandler.SELECTORS.APPLY_FILTERS_BUTTON,
       {
         timeout: JobSearchHandler.CONFIG.TIMEOUTS.FILTER_WAIT,
       }
     );
-    await this.page.click(
-      JobSearchHandler.CACHED_SELECTORS.APPLY_FILTERS_BUTTON
-    );
+    await this.page.click(JobSearchHandler.SELECTORS.APPLY_FILTERS_BUTTON);
 
     // Wait for filtered results to load
     await this.page.waitForSelector(
-      JobSearchHandler.CACHED_SELECTORS.JOB_RESULTS_LIST,
+      JobSearchHandler.SELECTORS.JOB_RESULTS_LIST,
       {
         timeout: JobSearchHandler.CONFIG.TIMEOUTS.RESULTS_WAIT,
       }
@@ -750,21 +880,18 @@ export class JobSearchHandler {
     try {
       // Wait for either job results or no results message
       await Promise.race([
-        this.page.waitForSelector(JobSearchHandler.CACHED_SELECTORS.JOB_CARD, {
+        this.page.waitForSelector(JobSearchHandler.SELECTORS.JOB_CARD, {
           timeout: 10000,
         }),
-        this.page.waitForSelector(
-          JobSearchHandler.CACHED_SELECTORS.NO_RESULTS,
-          {
-            timeout: 10000,
-          }
-        ),
+        this.page.waitForSelector(JobSearchHandler.SELECTORS.NO_RESULTS, {
+          timeout: 10000,
+        }),
       ]);
 
       // Wait for loading spinner to disappear
       try {
         await this.page.waitForSelector(
-          JobSearchHandler.CACHED_SELECTORS.LOADING_SPINNER,
+          JobSearchHandler.SELECTORS.LOADING_SPINNER,
           {
             hidden: true,
             timeout: 5000,
@@ -791,9 +918,7 @@ export class JobSearchHandler {
     });
 
     try {
-      const jobCards = await this.page.$$(
-        JobSearchHandler.CACHED_SELECTORS.JOB_CARD
-      );
+      const jobCards = await this.page.$$(JobSearchHandler.SELECTORS.JOB_CARD);
 
       this.logger.debug(`Found ${jobCards.length} job cards on current page`);
 
@@ -833,14 +958,14 @@ export class JobSearchHandler {
   private async getTotalResultsCount(): Promise<number> {
     try {
       await this.page.waitForSelector(
-        JobSearchHandler.CACHED_SELECTORS.RESULTS_COUNT,
+        JobSearchHandler.SELECTORS.RESULTS_COUNT,
         {
           timeout: JobSearchHandler.CONFIG.TIMEOUTS.FILTER_WAIT,
         }
       );
 
       const countText = await this.page.$eval(
-        JobSearchHandler.CACHED_SELECTORS.RESULTS_COUNT,
+        JobSearchHandler.SELECTORS.RESULTS_COUNT,
         (el) => el.textContent?.trim() || '0'
       );
 
@@ -853,9 +978,7 @@ export class JobSearchHandler {
       return 0;
     } catch {
       // If we can't get the count, estimate based on visible job cards
-      const jobCards = await this.page.$$(
-        JobSearchHandler.CACHED_SELECTORS.JOB_CARD
-      );
+      const jobCards = await this.page.$$(JobSearchHandler.SELECTORS.JOB_CARD);
       return jobCards.length;
     }
   }
@@ -866,7 +989,7 @@ export class JobSearchHandler {
   private async hasNextPage(): Promise<boolean> {
     try {
       const nextButton = await this.page.$(
-        JobSearchHandler.CACHED_SELECTORS.NEXT_PAGE_BUTTON
+        JobSearchHandler.SELECTORS.NEXT_PAGE_BUTTON
       );
       if (!nextButton) return false;
 
@@ -886,7 +1009,7 @@ export class JobSearchHandler {
   private async goToNextPage(): Promise<void> {
     try {
       const nextButton = await this.page.$(
-        JobSearchHandler.CACHED_SELECTORS.NEXT_PAGE_BUTTON
+        JobSearchHandler.SELECTORS.NEXT_PAGE_BUTTON
       );
       if (nextButton) {
         await nextButton.click();

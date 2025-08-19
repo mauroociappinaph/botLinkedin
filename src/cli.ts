@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import * as process from 'process';
+import process from 'process';
 import { ConfigLoader, ConfigValidator } from './config';
 import { LinkedInService } from './linkedin';
 import { LogLevel, Logger } from './utils';
@@ -109,7 +109,7 @@ class LinkedInBotCLI {
             console.log('🔍 Validating configuration...');
 
             // Load configuration
-            const config = ConfigLoader.load(configPath);
+            const config = await ConfigLoader.load(configPath);
 
             // Validate configuration
             const validation = ConfigValidator.validate(config);

@@ -5,6 +5,7 @@ A Node.js automation tool that streamlines job applications on LinkedIn by targe
 ## Features
 
 - **Smart Job Targeting**: Focuses exclusively on LinkedIn "Easy Apply" positions
+- **Boolean Search Support**: Advanced search expressions with AND, OR, NOT operators for precise job targeting
 - **Intelligent Form Filling**: Automatically completes application forms with pre-configured personal information
 - **Duplicate Prevention**: Maintains SQLite database to track applied positions
 - **Stealth Operation**: Uses anti-detection techniques to maintain account safety
@@ -85,7 +86,13 @@ Create a `config.json` file in the project root with your LinkedIn credentials a
     "datePosted": "pastWeek",
     "remoteWork": true,
     "experienceLevel": ["entry", "associate"],
-    "jobType": ["fullTime"]
+    "jobType": ["fullTime"],
+    "booleanSearch": {
+      "enabled": true,
+      "expression": "\"React developer\" AND (remote OR \"work from home\") AND -junior",
+      "fallbackKeywords": ["React developer", "remote"],
+      "validateSyntax": true
+    }
   },
   "application": {
     "personalInfo": {
@@ -153,6 +160,43 @@ npm start -- --config ./configs/production.json
 # Development with auto-reload
 npm run dev
 ```
+
+## Boolean Search Queries
+
+The bot supports advanced boolean search expressions for more precise job targeting:
+
+### Basic Syntax
+- **AND**: Both terms must be present
+- **OR**: Either term can be present
+- **NOT** or **-**: Exclude terms
+- **"quotes"**: Exact phrases
+- **(parentheses)**: Group terms
+
+### Examples
+
+```json
+{
+  "booleanSearch": {
+    "enabled": true,
+    "expression": "\"React developer\" AND (remote OR \"work from home\") AND -junior",
+    "fallbackKeywords": ["React developer", "remote"],
+    "validateSyntax": true
+  }
+}
+```
+
+**Common Patterns:**
+- `"Frontend developer" AND (React OR Vue OR Angular) AND remote`
+- `("full stack" OR "fullstack") AND (senior OR lead) AND -intern`
+- `developer AND (Madrid OR Barcelona OR "remote Spain")`
+
+### Configuration Options
+- **`enabled`**: Enable/disable boolean search
+- **`expression`**: The boolean search expression
+- **`fallbackKeywords`**: Backup keywords if expression fails
+- **`validateSyntax`**: Validate expression before use (recommended)
+
+📚 **See [Boolean Search Guide](docs/boolean-search-guide.md) for detailed examples and best practices**
 
 ## Monitoring and Logs
 

@@ -136,6 +136,7 @@ export class SessionManager {
 
       await this.page.goto('https://www.linkedin.com/login', {
         waitUntil: 'networkidle2',
+        timeout: 30000,
       });
 
       await DelayUtils.randomDelay(
@@ -151,14 +152,25 @@ export class SessionManager {
         return true;
       }
 
-      // Perform login
-      const loginSuccess = await this.performLogin();
+      // Perform login with enhanced error handling
+      const loginSuccess = await this.performLoginWithFallback();
 
       if (loginSuccess) {
         await this.saveSession();
         this.logger.info('LinkedIn login successful');
       } else {
-        this.logger.error('LinkedIn login failed');
+        this.logger.error(
+          'LinkedIn login failed - manual intervention may be required'
+        );
+        // Don't throw error, allow manual login
+        await this.handleManualLoginIntervention();
+        const manualLoginSuccess = await this.isLoggedIn();
+        if (manualLoginSuccess) {
+          await this.saveSession();
+          this.logger.info('Manual login successful');
+          this.isAuthenticating = false;
+          return true;
+        }
       }
 
       this.isAuthenticating = false;
@@ -168,15 +180,25 @@ export class SessionManager {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`Login failed: ${errorMessage}`);
+
+      // Instead of throwing, try manual intervention
+      this.logger.info('Attempting manual login intervention...');
+      await this.handleManualLoginIntervention();
+      const manualSuccess = await this.isLoggedIn();
+      if (manualSuccess) {
+        await this.saveSession();
+        return true;
+      }
+
       throw new Error(`LinkedIn login failed: ${errorMessage}`);
     }
   }
 
   /**
-   * Performs the actual login process with credentials
+   * Performs the actual login process with credentials and fallback handling
    * @returns Promise that resolves to true if login successful
    */
-  private async performLogin(): Promise<boolean> {
+  private async performLoginWithFallback(): Promise<boolean> {
     if (!this.page) return false;
 
     try {
@@ -478,6 +500,29 @@ export class SessionManager {
 
     // Give some time for the page to process
     await DelayUtils.randomDelay(2000, 3000);
+  }
+
+  /**
+   * Handles manual login intervention when automated login fails
+   */
+  private async handleManualLoginIntervention(): Promise<void> {
+    this.logger.warn('Automated login failed - Manual intervention required');
+    this.logger.info('🔑 MANUAL LOGIN REQUIRED 🔑');
+    this.logger.info('Please log in manually in the browser window.');
+    this.logger.info('This may include:');
+    this.logger.info('  - Solving CAPTCHA challenges');
+    this.logger.info('  - Completing two-factor authentication');
+    this.logger.info('  - Verifying your identity');
+    this.logger.info('The bot will wait for you to complete the login...');
+    this.logger.info(
+      'Press Enter when you have successfully logged in to continue.'
+    );
+
+    // Wait for user input
+    await this.waitForUserInput();
+
+    // Give some time for the page to process
+    await DelayUtils.randomDelay(2000, 4000);
   }
 
   /**

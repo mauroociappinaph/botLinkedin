@@ -1,0 +1,70 @@
+{
+    "linkedin": {
+        "email": "${LINKEDIN_EMAIL}",
+        "password": "${LINKEDIN_PASSWORD}"
+    },
+    "search": {
+        "keywords": [
+            "software engineer",
+            "developer",
+            "remote work"
+        ],
+        "location": "España",
+        "datePosted": "pastWeek",
+        "remoteWork": true,
+        "experienceLevel": [
+            "entry",
+            "associate",
+            "mid"
+        ],
+        "jobType": [
+            "fullTime",
+            "contract"
+        ],
+        "salaryRange": {
+            "min": 30000,
+            "max": 70000
+        },
+        "booleanSearch": {
+            "enabled": true,
+            "expression": "(\"React developer\" OR \"Frontend developer\" OR \"Full stack developer\") AND (remote OR \"trabajo remoto\" OR \"work from home\") AND -junior AND -intern",
+            "fallbackKeywords": [
+                "React developer",
+                "Frontend developer",
+                "remote work"
+            ],
+            "validateSyntax": true
+        }
+    },
+    "application": {
+        "personalInfo": {
+            "experience": "3 años de experiencia en desarrollo frontend con React, TypeScript y Node.js. Especializado en trabajo remoto con equipos internacionales.",
+            "salaryExpectation": {
+                "min": 35000,
+                "max": 65000,
+                "currency": "USD"
+            }
+        },
+        "commonAnswers": {
+            "Why are you interested in this role?": "Estoy muy interesado en esta oportunidad porque busco específicamente trabajar de forma remota con tecnologías modernas como React y TypeScript.",
+            "What are your salary expectations?": "Busco un salario competitivo entre $35,000 - $65,000 USD anuales, considerando la modalidad remota.",
+            "¿Por qué te interesa este puesto?": "Me apasiona el desarrollo frontend y busco oportunidades remotas donde pueda crecer profesionalmente.",
+            "¿Cuáles son tus expectativas salariales?": "Busco un salario competitivo entre $35,000 - $65,000 USD anuales.",
+            "How many years of experience do you have?": "3 años de experiencia en desarrollo frontend",
+            "Are you willing to relocate?": "Prefiero trabajo remoto",
+            "What is your notice period?": "2 semanas",
+            "Are you available for remote work?": "Sí, busco específicamente oportunidades de trabajo remoto"
+        }
+    },
+    "browser": {
+        "headless": false,
+        "slowMo": 150,
+        "timeout": 45000
+    },
+    "delays": {
+        "minPageLoad": 3000,
+        "maxPageLoad": 6000,
+        "minTyping": 75,
+        "maxTyping": 200
+    }
+}

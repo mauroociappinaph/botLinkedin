@@ -1,14 +1,16 @@
 /**
  * Centralized LinkedIn selector management with validation and fallbacks
+ * Supports multiple locales and provides robust fallback mechanisms
  */
 export class LinkedInSelectors {
-  // LinkedIn job search selectors
+  // LinkedIn job search selectors - Primary selectors with locale awareness
   public static readonly SELECTORS = {
-    // Search input and button
-    SEARCH_INPUT: 'input[aria-label="Search by title, skill, or company"]',
+    // Search input and button - Multi-locale support
+    SEARCH_INPUT: '.jobs-search-box__text-input',
     LOCATION_INPUT:
-      'input[aria-label="City, state, zip code, or \\"remote\\""]',
-    SEARCH_BUTTON: 'button[aria-label="Search"]',
+      'input[id*="jobs-search-box-location"], input[aria-label*="Ciudad, provincia"], input[aria-label*="City, state"], .jobs-search-box__text-input[aria-label*="location"]',
+    SEARCH_BUTTON:
+      'button[aria-label*="Search"], button[aria-label*="Buscar"], .jobs-search-box__submit-button, button[data-test-id="jobs-search-box-submit-button"]',
 
     // Job search filters
     FILTERS_BUTTON: 'button[aria-label="Show all filters"]',
@@ -41,16 +43,76 @@ export class LinkedInSelectors {
     LOADING_SPINNER: '.jobs-search-results-list__loading-indicator',
   } as const;
 
-  // Alternative selectors for fallback
+  // Comprehensive fallback selectors organized by locale and priority
   public static readonly FALLBACK_SELECTORS = {
-    SEARCH_INPUT: ['input[placeholder*="Search"]', 'input[name="keywords"]'],
-    LOCATION_INPUT: [
-      'input[placeholder*="location"]',
-      'input[name="location"]',
+    SEARCH_INPUT: [
+      // Spanish selectors
+      'input[aria-label*="Busca por cargo"]',
+      'input[aria-label*="Buscar empleos"]',
+      'input[placeholder*="Buscar empleos"]',
+      // English selectors
+      'input[aria-label*="Search by title"]',
+      'input[aria-label*="Search jobs"]',
+      'input[placeholder*="Search jobs"]',
+      // Generic selectors
+      '.jobs-search-box input[type="text"]',
+      'input.jobs-search-box__text-input',
+      'input[placeholder*="Search"]',
+      'input[name="keywords"]',
+      '[data-test-id*="jobs-search-box-keyword"]',
     ],
-    JOB_CARD: ['.job-result-card', '.jobs-search-results__list-item'],
-    JOB_TITLE: ['.job-result-card__title', '.job-title a'],
-    EASY_APPLY_BUTTON: ['.jobs-apply-button', '.apply-button'],
+    LOCATION_INPUT: [
+      // Spanish selectors (ordered by specificity)
+      'input[aria-label*="Ciudad, provincia/estado o código postal"]',
+      'input[aria-label*="Ciudad, provincia"]',
+      'input[placeholder*="Ciudad, provincia"]',
+      'input[aria-label*="ubicación"]',
+      'input[placeholder*="ubicación"]',
+      // English selectors
+      'input[aria-label*="City, state, zip code"]',
+      'input[aria-label*="City, state"]',
+      'input[placeholder*="City, state"]',
+      'input[aria-label*="location"]',
+      'input[placeholder*="location"]',
+      // Generic selectors
+      'input[id*="jobs-search-box-location"]',
+      'input[name="location"]',
+      '.jobs-search-box input[placeholder*="Ciudad"]',
+      '.jobs-search-box input[placeholder*="City"]',
+      '[data-test-id*="jobs-search-box-location"]',
+    ],
+    SEARCH_BUTTON: [
+      // Spanish selectors
+      'button[aria-label*="Buscar"]',
+      'button:contains("Buscar")',
+      // English selectors
+      'button[aria-label*="Search"]',
+      'button:contains("Search")',
+      // Generic selectors
+      '.jobs-search-box__submit-button',
+      'button[data-test-id="jobs-search-box-submit-button"]',
+      '.jobs-search-box button[type="submit"]',
+    ],
+    JOB_CARD: [
+      '.job-search-card',
+      '.job-result-card',
+      '.jobs-search-results__list-item',
+      '[data-test-id*="job-card"]',
+    ],
+    JOB_TITLE: [
+      '.job-search-card__title a',
+      '.job-result-card__title a',
+      '.job-title a',
+      '[data-test-id*="job-title"] a',
+    ],
+    EASY_APPLY_BUTTON: [
+      '.jobs-apply-button--top-card',
+      '.jobs-apply-button',
+      '.apply-button',
+      'button:contains("Easy Apply")',
+      'button:contains("Postulación fácil")',
+      '[data-test-id*="easy-apply"]',
+    ],
   } as const;
 
   // LinkedIn filter values mapping
@@ -79,46 +141,112 @@ export class LinkedInSelectors {
       partTime: 'P',
       contract: 'C',
       temporary: 'T',
-      volunteer: 'V',
       internship: 'I',
     },
   } as const;
 
   /**
-   * Validates if a selector exists on the page
+   * Validates if a selector exists on the page with timeout and error handling
+   * @param page - Puppeteer page instance
+   * @param selector - CSS selector to validate
+   * @param timeout - Maximum time to wait for selector (default: 2000ms)
+   * @returns Promise<boolean> - True if selector exists and is visible
    */
   public static async validateSelector(
     page: import('puppeteer').Page,
-    selector: string
+    selector: string,
+    timeout: number = 2000
   ): Promise<boolean> {
     try {
-      const element = await page.$(selector);
-      return !!element;
+      await page.waitForSelector(selector, {
+        timeout,
+        visible: true,
+      });
+      return true;
     } catch {
+      // Log validation failure for debugging (in development)
       return false;
     }
   }
 
   /**
-   * Gets a working selector with fallback options
+   * Gets a working selector with comprehensive fallback options and caching
+   * @param page - Puppeteer page instance
+   * @param primarySelector - Primary selector to try first
+   * @param fallbacks - Array of fallback selectors
+   * @param timeout - Timeout for each selector validation
+   * @returns Promise<string | null> - Working selector or null if none found
    */
   public static async getWorkingSelector(
     page: import('puppeteer').Page,
     primarySelector: string,
-    fallbacks: string[] = []
+    fallbacks: string[] = [],
+    timeout: number = 2000
   ): Promise<string | null> {
     // Try primary selector first
-    if (await this.validateSelector(page, primarySelector)) {
+    if (await this.validateSelector(page, primarySelector, timeout)) {
       return primarySelector;
     }
 
-    // Try fallback selectors
+    // Try fallback selectors in order of priority
     for (const fallback of fallbacks) {
-      if (await this.validateSelector(page, fallback)) {
+      if (await this.validateSelector(page, fallback, timeout)) {
         return fallback;
       }
     }
 
     return null;
+  }
+
+  /**
+   * Gets the appropriate fallback selectors for a given selector key
+   * @param selectorKey - Key from FALLBACK_SELECTORS
+   * @returns Array of fallback selectors or empty array if key not found
+   */
+  public static getFallbackSelectors(
+    selectorKey: keyof typeof LinkedInSelectors.FALLBACK_SELECTORS
+  ): readonly string[] {
+    return this.FALLBACK_SELECTORS[selectorKey] || [];
+  }
+
+  /**
+   * Detects the likely locale of the LinkedIn page based on visible elements
+   * @param page - Puppeteer page instance
+   * @returns Promise<'es' | 'en' | 'unknown'> - Detected locale
+   */
+  public static async detectLocale(
+    page: import('puppeteer').Page
+  ): Promise<'es' | 'en' | 'unknown'> {
+    try {
+      // Check for Spanish indicators
+      const spanishIndicators = [
+        'button:contains("Buscar")',
+        'input[placeholder*="Ciudad, provincia"]',
+        'text*="Postulación fácil"',
+      ];
+
+      for (const indicator of spanishIndicators) {
+        if (await this.validateSelector(page, indicator, 1000)) {
+          return 'es';
+        }
+      }
+
+      // Check for English indicators
+      const englishIndicators = [
+        'button:contains("Search")',
+        'input[placeholder*="City, state"]',
+        'text*="Easy Apply"',
+      ];
+
+      for (const indicator of englishIndicators) {
+        if (await this.validateSelector(page, indicator, 1000)) {
+          return 'en';
+        }
+      }
+
+      return 'unknown';
+    } catch {
+      return 'unknown';
+    }
   }
 }

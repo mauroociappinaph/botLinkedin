@@ -105,7 +105,9 @@ export class CaptchaHandler {
       for (const method of detectionMethods) {
         const result = await method();
         if (result.detected) {
-          this.logger.warn(`CAPTCHA detected: ${result.method}${result.selector ? ` (${result.selector})` : ''}`);
+          this.logger.warn(
+            `CAPTCHA detected: ${result.method}${result.selector ? ` (${result.selector})` : ''}`
+          );
           return true;
         }
       }
@@ -141,7 +143,11 @@ export class CaptchaHandler {
       CaptchaHandler.CAPTCHA_SELECTORS.RECAPTCHA_FRAME
     );
     if (recaptchaFrame) {
-      return { detected: true, method: 'reCAPTCHA frame', selector: CaptchaHandler.CAPTCHA_SELECTORS.RECAPTCHA_FRAME };
+      return {
+        detected: true,
+        method: 'reCAPTCHA frame',
+        selector: CaptchaHandler.CAPTCHA_SELECTORS.RECAPTCHA_FRAME,
+      };
     }
     return { detected: false };
   }
@@ -150,10 +156,15 @@ export class CaptchaHandler {
    * Detects LinkedIn specific security challenges
    */
   private async detectLinkedInChallenges(): Promise<DetectionResult> {
-    for (const selector of CaptchaHandler.CAPTCHA_SELECTORS.LINKEDIN_CHALLENGE) {
+    for (const selector of CaptchaHandler.CAPTCHA_SELECTORS
+      .LINKEDIN_CHALLENGE) {
       const element = await this.page.$(selector);
       if (element) {
-        return { detected: true, method: 'LinkedIn security challenge', selector };
+        return {
+          detected: true,
+          method: 'LinkedIn security challenge',
+          selector,
+        };
       }
     }
     return { detected: false };
@@ -175,12 +186,16 @@ export class CaptchaHandler {
    */
   private async detectChallengeByUrl(): Promise<DetectionResult> {
     const currentUrl = this.page.url();
-    const urlHasChallenge = CaptchaHandler.CHALLENGE_URL_PATTERNS.some((pattern) =>
-      currentUrl.includes(pattern)
+    const urlHasChallenge = CaptchaHandler.CHALLENGE_URL_PATTERNS.some(
+      (pattern) => currentUrl.includes(pattern)
     );
 
     if (urlHasChallenge) {
-      return { detected: true, method: 'URL pattern analysis', selector: currentUrl };
+      return {
+        detected: true,
+        method: 'URL pattern analysis',
+        selector: currentUrl,
+      };
     }
     return { detected: false };
   }
@@ -274,7 +289,8 @@ export class CaptchaHandler {
   private async checkChallengeTextIndicators(): Promise<boolean> {
     return this.page.evaluate((indicators: readonly string[]) => {
       // eslint-disable-next-line no-undef
-      const bodyText = (document.body?.innerText?.toLowerCase() || '') as string;
+      const bodyText = (document.body?.innerText?.toLowerCase() ||
+        '') as string;
       return indicators.some((indicator: string) =>
         bodyText.includes(indicator.toLowerCase())
       );
@@ -335,11 +351,7 @@ export class CaptchaHandler {
    * Checks for job-related elements
    */
   private async checkJobRelatedElements(): Promise<boolean> {
-    const jobSelectors = [
-      '.jobs-search',
-      '.job-details',
-      '.jobs-apply-button',
-    ];
+    const jobSelectors = ['.jobs-search', '.job-details', '.jobs-apply-button'];
 
     return this.checkAnyElementExists(jobSelectors);
   }
@@ -376,7 +388,8 @@ export class CaptchaHandler {
   private async takeScreenshot(filename: string): Promise<void> {
     try {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const screenshotPath = `screenshots/${filename}-${timestamp}.png` as const;
+      const screenshotPath =
+        `screenshots/${filename}-${timestamp}.png` as const;
 
       await this.page.screenshot({
         path: screenshotPath,
@@ -438,7 +451,9 @@ export class CaptchaHandler {
    */
   public async handleCaptchaTimeout(): Promise<void> {
     const timeoutMinutes = Math.ceil(this.config.timeoutMs / 60000);
-    this.logger.error(`CAPTCHA resolution timed out after ${timeoutMinutes} minutes`);
+    this.logger.error(
+      `CAPTCHA resolution timed out after ${timeoutMinutes} minutes`
+    );
 
     await this.takeScreenshot('captcha-timeout');
 

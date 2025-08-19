@@ -33,6 +33,8 @@ interface SessionStatistics {
  * Implements Requirements: 5.2, 5.3, 7.3
  */
 export class LinkedInService {
+  private static readonly POLLING_INTERVAL_MS = 1000;
+
   private config!: BotConfig;
   private logger: Logger;
   private databaseService: DatabaseService;
@@ -47,7 +49,7 @@ export class LinkedInService {
   private isRunning: boolean = false;
   private shouldStop: boolean = false;
   private currentSessionId?: string;
-  private readonly configPath?: string;
+  private readonly configPath: string | undefined;
 
   constructor(configPath?: string) {
     this.configPath = configPath;
@@ -96,8 +98,7 @@ export class LinkedInService {
       this.logger.info('LinkedIn job application bot completed successfully');
       return { success: true };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = this.getErrorMessage(error);
       this.logger.error('LinkedIn bot execution failed', {
         error: errorMessage,
       });
@@ -128,7 +129,9 @@ export class LinkedInService {
 
     // Wait for current operation to complete
     while (this.isRunning) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) =>
+        setTimeout(resolve, LinkedInService.POLLING_INTERVAL_MS)
+      );
     }
 
     await this.cleanup();
@@ -184,7 +187,7 @@ export class LinkedInService {
       this.logger.info('All components initialized successfully');
     } catch (error) {
       this.logger.error('Failed to initialize LinkedIn service', {
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: this.getErrorMessage(error),
       });
       throw error;
     }
@@ -279,9 +282,9 @@ export class LinkedInService {
       const statistics = await this.processJobsSequentially(jobs);
       this.logProcessingResults(statistics);
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Job processing loop failed', { error: errorMessage });
+      this.logger.error('Job processing loop failed', {
+        error: this.getErrorMessage(error),
+      });
       throw error;
     }
   }
@@ -355,26 +358,56 @@ export class LinkedInService {
   ): Promise<void> {
     try {
       statistics.processed++;
-      this.logger.info(
-        `Processing job ${statistics.processed}/${totalJobs}: ${job.title} at ${job.company}`
-      );
+      this.logJobProcessingStart(job, statistics.processed, totalJobs);
 
-      // Check for duplicates
-      if (await this.isDuplicateJob(job)) {
-        statistics.skipped++;
-        this.logger.info(`Skipping duplicate job: ${job.id}`);
+      if (await this.shouldSkipJob(job, statistics)) {
         return;
       }
 
-      // Store job in database
       await this.storeJob(job);
-
-      // Apply to job
-      const applicationResult = await this.applyToJobSafely(job);
-      this.updateStatisticsFromResult(applicationResult, job, statistics);
+      await this.attemptJobApplication(job, statistics);
     } catch (error) {
       await this.handleJobProcessingError(error, job, statistics);
     }
+  }
+
+  /**
+   * Logs the start of job processing
+   */
+  private logJobProcessingStart(
+    job: JobPosting,
+    processed: number,
+    total: number
+  ): void {
+    this.logger.info(
+      `Processing job ${processed}/${total}: ${job.title} at ${job.company}`
+    );
+  }
+
+  /**
+   * Checks if job should be skipped and updates statistics accordingly
+   */
+  private async shouldSkipJob(
+    job: JobPosting,
+    statistics: SessionStatistics
+  ): Promise<boolean> {
+    if (await this.isDuplicateJob(job)) {
+      statistics.skipped++;
+      this.logger.info(`Skipping duplicate job: ${job.id}`);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Attempts to apply to a job and updates statistics
+   */
+  private async attemptJobApplication(
+    job: JobPosting,
+    statistics: SessionStatistics
+  ): Promise<void> {
+    const applicationResult = await this.applyToJobSafely(job);
+    this.updateStatisticsFromResult(applicationResult, job, statistics);
   }
 
   /**
@@ -387,13 +420,24 @@ export class LinkedInService {
       throw new Error('Application handler or page not initialized');
     }
 
-    return await this.errorHandler.executeWithRetry(
-      () => this.applicationHandler!.applyToJob(this.page!, job),
-      {
-        category: 'application' as unknown,
-        jobId: job.id,
-      }
-    );
+    try {
+      await this.applicationHandler!.applyToJob(this.page!, job);
+      return {
+        success: true,
+        data: true,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          code: 'APPLICATION_FAILED',
+          message:
+            error instanceof Error ? error.message : 'Application failed',
+          timestamp: new Date(),
+          recoverable: true,
+        },
+      };
+    }
   }
 
   /**
@@ -427,8 +471,7 @@ export class LinkedInService {
     statistics: SessionStatistics
   ): Promise<void> {
     statistics.errors++;
-    const errorMessage =
-      error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = this.getErrorMessage(error);
     this.logger.error(`Error processing job: ${job.title}`, {
       error: errorMessage,
     });
@@ -442,7 +485,7 @@ export class LinkedInService {
     } catch (dbError) {
       this.logger.error('Failed to update job status in database', {
         jobId: job.id,
-        error: dbError instanceof Error ? dbError.message : 'Unknown error',
+        error: this.getErrorMessage(dbError),
       });
     }
   }
@@ -484,7 +527,7 @@ export class LinkedInService {
     } catch (error) {
       this.logger.error('Error checking for duplicate job', {
         jobId: job.id,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: this.getErrorMessage(error),
       });
       return false;
     }
@@ -563,7 +606,7 @@ export class LinkedInService {
         });
       } catch (dbError) {
         this.logger.error('Failed to update session status', {
-          error: dbError instanceof Error ? dbError.message : 'Unknown error',
+          error: this.getErrorMessage(dbError),
         });
       }
     }
@@ -572,8 +615,8 @@ export class LinkedInService {
     const enhancedError = this.errorHandler.enhanceError(
       error instanceof Error ? error : new Error(String(error)),
       {
-        sessionId: this.currentSessionId,
-        url: this.page?.url(),
+        ...(this.currentSessionId && { sessionId: this.currentSessionId }),
+        ...(this.page?.url() && { url: this.page.url() }),
       }
     );
 
@@ -605,9 +648,16 @@ export class LinkedInService {
       this.logger.info('Cleanup completed successfully');
     } catch (error) {
       this.logger.error('Error during cleanup', {
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: this.getErrorMessage(error),
       });
     }
+  }
+
+  /**
+   * Extracts error message from unknown error type
+   */
+  private getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : 'Unknown error';
   }
 
   /**

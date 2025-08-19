@@ -1,0 +1,72 @@
+{
+    "linkedin": {
+        "email": "${LINKEDIN_EMAIL}",
+        "password": "${LINKEDIN_PASSWORD}"
+    },
+    "search": {
+        "keywords": [
+            "remote software engineer",
+            "desarrollador remoto",
+            "remote developer",
+            "full stack remote",
+            "react remote",
+            "node.js remote",
+            "javascript remote",
+            "typescript remote",
+            "frontend remote",
+            "backend remote"
+        ],
+        "location": "Remote",
+        "datePosted": "pastWeek",
+        "remoteWork": true,
+        "experienceLevel": [
+            "entry",
+            "associate",
+            "mid"
+        ],
+        "jobType": [
+            "fullTime",
+            "contract"
+        ],
+        "salaryRange": {
+            "min": 25000,
+            "max": 75000
+        }
+    },
+    "application": {
+        "personalInfo": {
+            "experience": "3 años de experiencia en desarrollo de software con JavaScript, TypeScript, React y Node.js. Especializado en trabajo remoto con equipos internacionales. Disponible para empresas en España, México, Argentina, Colombia y otros países de habla hispana.",
+            "salaryExpectation": {
+                "min": 35000,
+                "max": 65000,
+                "currency": "USD"
+            }
+        },
+        "commonAnswers": {
+            "Why are you interested in this role?": "Estoy muy interesado en esta oportunidad porque busco específicamente trabajar de forma remota con equipos de habla hispana, donde puedo aportar mi experiencia técnica y comunicarme fluidamente en español.",
+            "What are your salary expectations?": "Busco un salario competitivo entre $35,000 - $65,000 USD anuales, considerando la modalidad remota y el mercado hispanoamericano.",
+            "¿Por qué te interesa este puesto?": "Me apasiona el desarrollo de software y busco oportunidades remotas donde pueda crecer profesionalmente mientras trabajo con equipos de habla hispana.",
+            "¿Cuáles son tus expectativas salariales?": "Busco un salario competitivo entre $35,000 - $65,000 USD anuales, acorde al mercado remoto hispanoamericano.",
+            "¿Tienes experiencia trabajando remotamente?": "Sí, tengo experiencia trabajando de forma remota y me adapto muy bien a esta modalidad de trabajo.",
+            "¿Qué horarios puedes trabajar?": "Puedo trabajar en horarios de América Latina (GMT-3 a GMT-6) y tengo flexibilidad para colaborar con equipos en España.",
+            "How many years of experience do you have?": "3 años de experiencia en desarrollo full-stack",
+            "Are you willing to relocate?": "Prefiero trabajo remoto, pero estoy abierto a oportunidades en países de habla hispana",
+            "What is your notice period?": "2 semanas",
+            "Are you available for remote work?": "Sí, busco específicamente oportunidades de trabajo remoto",
+            "Do you speak Spanish?": "Sí, soy hablante nativo de español y también tengo nivel avanzado de inglés",
+            "Can you work with international teams?": "Sí, tengo experiencia trabajando con equipos internacionales de forma remota",
+            "¿Puedes trabajar con equipos distribuidos?": "Sí, tengo experiencia trabajando con equipos distribuidos y herramientas de colaboración remota"
+        }
+    },
+    "browser": {
+        "headless": false,
+        "slowMo": 150,
+        "timeout": 45000
+    },
+    "delays": {
+        "minPageLoad": 3000,
+        "maxPageLoad": 6000,
+        "minTyping": 75,
+        "maxTyping": 200
+    }
+}

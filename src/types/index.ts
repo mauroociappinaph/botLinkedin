@@ -66,6 +66,12 @@ export interface JobSearchConfig {
     min?: number;
     max?: number;
   };
+  booleanSearch?: {
+    enabled: boolean;
+    expression: string;
+    fallbackKeywords?: string[];
+    validateSyntax?: boolean;
+  };
 }
 
 export interface ApplicationConfig {

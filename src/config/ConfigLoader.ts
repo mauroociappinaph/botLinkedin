@@ -1,6 +1,10 @@
+import { config as dotenvConfig } from 'dotenv';
 import { promises as fs, readFileSync } from 'fs';
 import { resolve } from 'path';
 import { BotConfig } from '../types';
+
+// Load environment variables from .env file
+dotenvConfig();
 
 export class ConfigLoader {
   private static readonly CONFIG_FILE_NAME = 'config.json';
@@ -22,6 +26,61 @@ export class ConfigLoader {
     if (!config || typeof config !== 'object') {
       throw new Error('Configuration file must contain a valid JSON object');
     }
+  }
+
+  /**
+   * Expands environment variables in configuration strings
+   * @param config Configuration object to expand
+   * @param path Current path in the configuration (for error reporting)
+   * @returns Configuration with environment variables expanded
+   */
+  private static expandEnvironmentVariables<T>(config: T, path = ''): T {
+    // Handle circular references
+    if (config && typeof config === 'object' && config.constructor === Object) {
+      const seen = new WeakSet();
+      if (seen.has(config)) {
+        throw new Error(
+          `Circular reference detected in configuration at path: ${path}`
+        );
+      }
+      seen.add(config);
+    }
+
+    if (typeof config === 'string') {
+      // Replace ${VAR_NAME} with environment variable value
+      return config.replace(
+        /\$\{([A-Z_][A-Z0-9_]*)\}/g,
+        (_match, varName: string) => {
+          const envValue = process.env[varName];
+          if (envValue === undefined) {
+            const pathInfo = path ? ` at path: ${path}` : '';
+            throw new Error(
+              `Environment variable '${varName}' is not defined${pathInfo}. ` +
+                `Please set this variable in your .env file or environment.`
+            );
+          }
+          return envValue;
+        }
+      ) as T;
+    }
+
+    if (Array.isArray(config)) {
+      return config.map((item, index) =>
+        ConfigLoader.expandEnvironmentVariables(item, `${path}[${index}]`)
+      ) as T;
+    }
+
+    if (config && typeof config === 'object' && config !== null) {
+      const expanded = {} as T;
+      for (const [key, value] of Object.entries(config)) {
+        const currentPath = path ? `${path}.${key}` : key;
+        (expanded as Record<string, unknown>)[key] =
+          ConfigLoader.expandEnvironmentVariables(value, currentPath);
+      }
+      return expanded;
+    }
+
+    return config;
   }
 
   /**
@@ -73,10 +132,16 @@ export class ConfigLoader {
 
       const config = JSON.parse(configContent) as BotConfig;
 
-      // Basic structure validation
-      ConfigLoader.validateBasicStructure(config);
+      // Expand environment variables
+      const expandedConfig = ConfigLoader.expandEnvironmentVariables(
+        config,
+        'config'
+      );
 
-      return config;
+      // Basic structure validation
+      ConfigLoader.validateBasicStructure(expandedConfig);
+
+      return expandedConfig;
     } catch (error) {
       if (error instanceof SyntaxError) {
         throw new Error(`Invalid JSON in configuration file: ${error.message}`);
@@ -110,10 +175,16 @@ export class ConfigLoader {
 
       const config = JSON.parse(configContent) as BotConfig;
 
-      // Basic structure validation
-      ConfigLoader.validateBasicStructure(config);
+      // Expand environment variables (consistent with async version)
+      const expandedConfig = ConfigLoader.expandEnvironmentVariables(
+        config,
+        'config'
+      );
 
-      return config;
+      // Basic structure validation
+      ConfigLoader.validateBasicStructure(expandedConfig);
+
+      return expandedConfig;
     } catch (error: unknown) {
       const nodeError = error as { code?: string };
       if (nodeError.code === 'ENOENT') {
