@@ -9,4 +9,6 @@ export { ApplicationStepProcessor } from './ApplicationStepProcessor';
 export { ApplicationValidator } from './ApplicationValidator';
 export { CaptchaHandler } from './CaptchaHandler';
 export { FormFiller } from './FormFiller';
+export { JobSearchHandler } from './JobSearchHandler';
+export { LinkedInService } from './LinkedInService';
 export { SelectorManager } from './SelectorManager';

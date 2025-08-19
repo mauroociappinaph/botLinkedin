@@ -428,7 +428,7 @@ describe('Logger', () => {
                 format: LogFormat.JSON,
             });
 
-            const circularObj: any = { name: 'test' };
+            const circularObj: unknown = { name: 'test' };
             circularObj.self = circularObj;
 
             // Should not throw

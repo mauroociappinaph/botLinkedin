@@ -94,14 +94,14 @@ export class ApplicationHandler {
       if (ResultUtils.isFailure(validationResult)) {
         return Failure(
           new ApplicationError(
-            `Validation failed: ${validationResult.error.message}`,
+            `Validation failed: ${validationResult.success ? 'Unknown error' : validationResult.error.message}`,
             job.id,
             'validation'
           )
         );
       }
 
-      if (!validationResult.data.isValid) {
+      if (validationResult.success && !validationResult.data.isValid) {
         this.logger.info(
           `Job ${job.id} validation failed: ${validationResult.data.skipReason}`
         );
@@ -117,14 +117,14 @@ export class ApplicationHandler {
       if (ResultUtils.isFailure(clickResult)) {
         return Failure(
           new ApplicationError(
-            `Failed to click Easy Apply: ${clickResult.error.message}`,
+            `Failed to click Easy Apply: ${clickResult.success ? 'Unknown error' : clickResult.error.message}`,
             job.id,
             'easy_apply_click'
           )
         );
       }
 
-      if (!clickResult.data) {
+      if (clickResult.success && !clickResult.data) {
         this.logger.warn(`Easy Apply button not found for job ${job.id}`);
         await this.markJobAsSkipped(job.id, 'Easy Apply not available');
         return Success(false);
@@ -136,14 +136,21 @@ export class ApplicationHandler {
       // Navigate through application steps
       const applicationResult = await this.completeApplicationSteps(page, job);
       if (ResultUtils.isFailure(applicationResult)) {
+        const errorMessage = applicationResult.success
+          ? 'Unknown error'
+          : applicationResult.error.message;
         await this.markJobAsError(
           job.id,
-          `Application process failed: ${applicationResult.error.message}`
+          `Application process failed: ${errorMessage}`
         );
-        return Failure(applicationResult.error);
+        return Failure(
+          applicationResult.success
+            ? new ApplicationError('Unknown error', job.id)
+            : applicationResult.error
+        );
       }
 
-      if (applicationResult.data) {
+      if (applicationResult.success && applicationResult.data) {
         await this.markJobAsApplied(job.id);
         this.logger.info(`Successfully applied to job: ${job.title}`);
         return Success(true);
@@ -249,9 +256,22 @@ export class ApplicationHandler {
         );
 
         if (ResultUtils.isFailure(stepResult)) {
+          const errorMessage = stepResult.success
+            ? 'Unknown error'
+            : stepResult.error.message;
           return Failure(
             new ApplicationError(
-              `Step processing failed: ${stepResult.error.message}`,
+              `Step processing failed: ${errorMessage}`,
+              job.id,
+              `step_${currentStep}`
+            )
+          );
+        }
+
+        if (!stepResult.success) {
+          return Failure(
+            new ApplicationError(
+              'Step processing failed: Unknown error',
               job.id,
               `step_${currentStep}`
             )
@@ -264,15 +284,18 @@ export class ApplicationHandler {
           case 'submit': {
             const submitResult = await this.submitApplication(page);
             if (ResultUtils.isFailure(submitResult)) {
+              const errorMessage = submitResult.success
+                ? 'Unknown error'
+                : submitResult.error.message;
               return Failure(
                 new ApplicationError(
-                  `Submission failed: ${submitResult.error.message}`,
+                  `Submission failed: ${errorMessage}`,
                   job.id,
                   'submission'
                 )
               );
             }
-            return Success(submitResult.data);
+            return Success(submitResult.success ? submitResult.data : false);
           }
 
           case 'error':
@@ -317,7 +340,10 @@ export class ApplicationHandler {
         return Success(false);
       }
 
-      const isEnabled = await page.evaluate((el) => !el.disabled, button);
+      const isEnabled = await page.evaluate(
+        (el) => !(el as HTMLButtonElement).disabled,
+        button
+      );
       if (!isEnabled) {
         return Success(false);
       }
@@ -335,10 +361,16 @@ export class ApplicationHandler {
       const validationResult =
         await this.validator.validateApplicationSuccess(page);
       if (ResultUtils.isFailure(validationResult)) {
-        return Failure(validationResult.error);
+        return Failure(
+          validationResult.success
+            ? new Error('Unknown validation error')
+            : validationResult.error
+        );
       }
 
-      return Success(validationResult.data.isValid);
+      return Success(
+        validationResult.success ? validationResult.data.isValid : false
+      );
     } catch (error) {
       this.logger.error(`Error submitting application: ${error}`);
       return Failure(error as Error);

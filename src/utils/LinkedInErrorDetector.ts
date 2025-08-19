@@ -89,7 +89,9 @@ export class LinkedInErrorDetector {
 
       return null;
     } catch (error) {
-      this.logger.error('Error during LinkedIn error detection:', error);
+      this.logger.error('Error during LinkedIn error detection:', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
   }
@@ -370,7 +372,9 @@ export class LinkedInErrorDetector {
 
       return true;
     } catch (error) {
-      this.logger.error('Error verifying LinkedIn session:', error);
+      this.logger.error('Error verifying LinkedIn session:', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }

@@ -125,7 +125,7 @@ export class StealthSetup {
   private static async overrideNavigatorProperties(page: Page): Promise<void> {
     // Override the webdriver property
     await page.evaluateOnNewDocument(() => {
-      // @ts-expect-error - This runs in browser context where navigator exists
+      // This runs in browser context where navigator exists
       // eslint-disable-next-line no-undef
       Object.defineProperty(navigator, 'webdriver', {
         get: () => undefined,
@@ -134,7 +134,7 @@ export class StealthSetup {
 
     // Override the plugins property
     await page.evaluateOnNewDocument((plugins: readonly number[]) => {
-      // @ts-expect-error - This runs in browser context where navigator exists
+      // This runs in browser context where navigator exists
       // eslint-disable-next-line no-undef
       Object.defineProperty(navigator, 'plugins', {
         get: () => plugins,
@@ -143,7 +143,7 @@ export class StealthSetup {
 
     // Override the languages property
     await page.evaluateOnNewDocument((languages: readonly string[]) => {
-      // @ts-expect-error - This runs in browser context where navigator exists
+      // This runs in browser context where navigator exists
       // eslint-disable-next-line no-undef
       Object.defineProperty(navigator, 'languages', {
         get: () => languages,

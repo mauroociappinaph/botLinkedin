@@ -1,17 +1,13 @@
 /**
  * Result pattern for better error handling
  */
-export type Result<T, E = Error> = Success<T> | Failure<E>;
 
-export interface Success<T> {
-  success: true;
-  data: T;
-}
+export type Result<T, E = Error> =
+  | { readonly success: true; readonly data: T }
+  | { readonly success: false; readonly error: E };
 
-export interface Failure<E> {
-  success: false;
-  error: E;
-}
+export type Success<T> = { readonly success: true; readonly data: T };
+export type Failure<E> = { readonly success: false; readonly error: E };
 
 export const createSuccess = <T>(data: T): Success<T> => ({
   success: true,
@@ -30,16 +26,16 @@ export { createFailure as Failure, createSuccess as Success };
  * Utility functions for working with Results
  */
 export class ResultUtils {
-  static isSuccess<T, E>(result: Result<T, E>): result is Success<T> {
+  static isSuccess<T, E>(result: Result<T, E>): boolean {
     return result.success;
   }
 
-  static isFailure<T, E>(result: Result<T, E>): result is Failure<E> {
+  static isFailure<T, E>(result: Result<T, E>): boolean {
     return !result.success;
   }
 
   static map<T, U, E>(result: Result<T, E>, fn: (data: T) => U): Result<U, E> {
-    if (ResultUtils.isSuccess(result)) {
+    if (result.success) {
       return createSuccess(fn(result.data));
     }
     return result;
@@ -49,7 +45,7 @@ export class ResultUtils {
     result: Result<T, E>,
     fn: (error: E) => F
   ): Result<T, F> {
-    if (ResultUtils.isFailure(result)) {
+    if (!result.success) {
       return createFailure(fn(result.error));
     }
     return result;

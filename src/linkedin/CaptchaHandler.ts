@@ -3,6 +3,24 @@ import { DelayUtils } from '../utils/DelayUtils';
 import { Logger } from '../utils/Logger';
 
 /**
+ * Configuration interface for CAPTCHA handler timeouts and intervals
+ */
+interface CaptchaConfig {
+  readonly timeoutMs: number;
+  readonly checkIntervalMs: number;
+  readonly progressLogIntervalMs: number;
+}
+
+/**
+ * Detection result interface for better type safety
+ */
+interface DetectionResult {
+  readonly detected: boolean;
+  readonly method?: string;
+  readonly selector?: string;
+}
+
+/**
  * CAPTCHA detection and handling for LinkedIn automation
  * Handles various CAPTCHA types and provides manual intervention support
  */
@@ -38,13 +56,36 @@ export class CaptchaHandler {
     ],
   } as const;
 
-  private static readonly CAPTCHA_TIMEOUT_MS = 300000; // 5 minutes
-  private static readonly CHECK_INTERVAL_MS = 2000; // 2 seconds
+  private static readonly DEFAULT_CONFIG: CaptchaConfig = {
+    timeoutMs: 300000, // 5 minutes
+    checkIntervalMs: 2000, // 2 seconds
+    progressLogIntervalMs: 30000, // 30 seconds
+  } as const;
+
+  private static readonly CHALLENGE_TEXT_INDICATORS = [
+    'Security Verification',
+    'Help us protect the LinkedIn community',
+    'Please complete this security check',
+    "Verify you're human",
+    'Are you a robot?',
+  ] as const;
+
+  private static readonly CHALLENGE_URL_PATTERNS = [
+    '/challenge',
+    '/security',
+    '/captcha',
+    '/verification',
+  ] as const;
+
+  private readonly config: CaptchaConfig;
 
   constructor(
     private page: Page,
-    private logger: Logger
-  ) {}
+    private logger: Logger,
+    config?: Partial<CaptchaConfig>
+  ) {
+    this.config = { ...CaptchaHandler.DEFAULT_CONFIG, ...config };
+  }
 
   /**
    * Detects if a CAPTCHA or security challenge is present on the page
@@ -53,81 +94,95 @@ export class CaptchaHandler {
     try {
       this.logger.info('Checking for CAPTCHA or security challenges...');
 
-      // Check for CAPTCHA containers
-      for (const selector of CaptchaHandler.CAPTCHA_SELECTORS
-        .CAPTCHA_CONTAINER) {
-        const element = await this.page.$(selector);
-        if (element) {
-          this.logger.warn(`CAPTCHA detected using selector: ${selector}`);
-          return true;
-        }
-      }
-
-      // Check for reCAPTCHA frames
-      const recaptchaFrame = await this.page.$(
-        CaptchaHandler.CAPTCHA_SELECTORS.RECAPTCHA_FRAME
-      );
-      if (recaptchaFrame) {
-        this.logger.warn('reCAPTCHA frame detected');
-        return true;
-      }
-
-      // Check for LinkedIn specific challenges
-      for (const selector of CaptchaHandler.CAPTCHA_SELECTORS
-        .LINKEDIN_CHALLENGE) {
-        const element = await this.page.$(selector);
-        if (element) {
-          this.logger.warn(`LinkedIn security challenge detected: ${selector}`);
-          return true;
-        }
-      }
-
-      // Check for challenge indicators by text content
-      const challengeText = await this.page.evaluate(() => {
-        const indicators = [
-          'Security Verification',
-          'Help us protect the LinkedIn community',
-          'Please complete this security check',
-          "Verify you're human",
-          'Are you a robot?',
-        ];
-
-        const bodyText = (
-          globalThis as any
-        ).document.body.innerText.toLowerCase();
-        return indicators.some((indicator) =>
-          bodyText.includes(indicator.toLowerCase())
-        );
-      });
-
-      if (challengeText) {
-        this.logger.warn('CAPTCHA detected by text content analysis');
-        return true;
-      }
-
-      // Check URL for challenge patterns
-      const currentUrl = this.page.url();
-      const challengeUrlPatterns = [
-        '/challenge',
-        '/security',
-        '/captcha',
-        '/verification',
+      const detectionMethods: Array<() => Promise<DetectionResult>> = [
+        (): Promise<DetectionResult> => this.detectCaptchaContainers(),
+        (): Promise<DetectionResult> => this.detectRecaptchaFrames(),
+        (): Promise<DetectionResult> => this.detectLinkedInChallenges(),
+        (): Promise<DetectionResult> => this.detectChallengeByTextContent(),
+        (): Promise<DetectionResult> => this.detectChallengeByUrl(),
       ];
 
-      const urlHasChallenge = challengeUrlPatterns.some((pattern) =>
-        currentUrl.includes(pattern)
-      );
-
-      if (urlHasChallenge) {
-        this.logger.warn(`CAPTCHA detected in URL: ${currentUrl}`);
-        return true;
+      for (const method of detectionMethods) {
+        const result = await method();
+        if (result.detected) {
+          this.logger.warn(`CAPTCHA detected: ${result.method}${result.selector ? ` (${result.selector})` : ''}`);
+          return true;
+        }
       }
 
       return false;
     } catch (error) {
-      this.logger.error('Error detecting CAPTCHA:', error);
+      this.logger.error('Error detecting CAPTCHA:', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       return false;
     }
+  }
+
+  /**
+   * Detects CAPTCHA containers using common selectors
+   */
+  private async detectCaptchaContainers(): Promise<DetectionResult> {
+    for (const selector of CaptchaHandler.CAPTCHA_SELECTORS.CAPTCHA_CONTAINER) {
+      const element = await this.page.$(selector);
+      if (element) {
+        return { detected: true, method: 'CAPTCHA container', selector };
+      }
+    }
+    return { detected: false };
+  }
+
+  /**
+   * Detects reCAPTCHA frames
+   */
+  private async detectRecaptchaFrames(): Promise<DetectionResult> {
+    const recaptchaFrame = await this.page.$(
+      CaptchaHandler.CAPTCHA_SELECTORS.RECAPTCHA_FRAME
+    );
+    if (recaptchaFrame) {
+      return { detected: true, method: 'reCAPTCHA frame', selector: CaptchaHandler.CAPTCHA_SELECTORS.RECAPTCHA_FRAME };
+    }
+    return { detected: false };
+  }
+
+  /**
+   * Detects LinkedIn specific security challenges
+   */
+  private async detectLinkedInChallenges(): Promise<DetectionResult> {
+    for (const selector of CaptchaHandler.CAPTCHA_SELECTORS.LINKEDIN_CHALLENGE) {
+      const element = await this.page.$(selector);
+      if (element) {
+        return { detected: true, method: 'LinkedIn security challenge', selector };
+      }
+    }
+    return { detected: false };
+  }
+
+  /**
+   * Detects challenges by analyzing page text content
+   */
+  private async detectChallengeByTextContent(): Promise<DetectionResult> {
+    const challengeText = await this.checkChallengeTextIndicators();
+    if (challengeText) {
+      return { detected: true, method: 'text content analysis' };
+    }
+    return { detected: false };
+  }
+
+  /**
+   * Detects challenges by analyzing the current URL
+   */
+  private async detectChallengeByUrl(): Promise<DetectionResult> {
+    const currentUrl = this.page.url();
+    const urlHasChallenge = CaptchaHandler.CHALLENGE_URL_PATTERNS.some((pattern) =>
+      currentUrl.includes(pattern)
+    );
+
+    if (urlHasChallenge) {
+      return { detected: true, method: 'URL pattern analysis', selector: currentUrl };
+    }
+    return { detected: false };
   }
 
   /**
@@ -159,7 +214,10 @@ export class CaptchaHandler {
         return false;
       }
     } catch (error) {
-      this.logger.error('Error handling CAPTCHA:', error);
+      this.logger.error('Error handling CAPTCHA:', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       return false;
     }
   }
@@ -169,7 +227,7 @@ export class CaptchaHandler {
    */
   private async waitForCaptchaResolution(): Promise<boolean> {
     const startTime = Date.now();
-    const timeoutMs = CaptchaHandler.CAPTCHA_TIMEOUT_MS;
+    const { timeoutMs, checkIntervalMs, progressLogIntervalMs } = this.config;
 
     this.logger.info(
       `Waiting for CAPTCHA resolution (timeout: ${timeoutMs / 1000}s)...`
@@ -189,23 +247,38 @@ export class CaptchaHandler {
         }
 
         // Wait before next check
-        await DelayUtils.sleep(CaptchaHandler.CHECK_INTERVAL_MS);
+        await DelayUtils.sleep(checkIntervalMs);
 
-        // Log progress every 30 seconds
+        // Log progress periodically
         const elapsed = Date.now() - startTime;
-        if (elapsed % 30000 < CaptchaHandler.CHECK_INTERVAL_MS) {
+        if (elapsed % progressLogIntervalMs < checkIntervalMs) {
           const remaining = Math.ceil((timeoutMs - elapsed) / 1000);
           this.logger.info(
             `Still waiting for CAPTCHA resolution... (${remaining}s remaining)`
           );
         }
       } catch (error) {
-        this.logger.error('Error while waiting for CAPTCHA resolution:', error);
-        await DelayUtils.sleep(CaptchaHandler.CHECK_INTERVAL_MS);
+        this.logger.error('Error while waiting for CAPTCHA resolution:', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        await DelayUtils.sleep(checkIntervalMs);
       }
     }
 
     return false; // Timeout reached
+  }
+
+  /**
+   * Checks for challenge text indicators in the page content
+   */
+  private async checkChallengeTextIndicators(): Promise<boolean> {
+    return this.page.evaluate((indicators: readonly string[]) => {
+      // eslint-disable-next-line no-undef
+      const bodyText = (document.body?.innerText?.toLowerCase() || '') as string;
+      return indicators.some((indicator: string) =>
+        bodyText.includes(indicator.toLowerCase())
+      );
+    }, CaptchaHandler.CHALLENGE_TEXT_INDICATORS);
   }
 
   /**
@@ -221,40 +294,80 @@ export class CaptchaHandler {
         return false;
       }
 
-      // Check for LinkedIn navigation elements
-      const linkedinElements = [
-        'nav[aria-label="Primary Navigation"]',
-        '.global-nav',
-        '[data-test="nav-logo"]',
-        '.linkedin-logo',
+      // Use a more comprehensive verification approach
+      const verificationMethods: Array<() => Promise<boolean>> = [
+        (): Promise<boolean> => this.checkLinkedInNavigationElements(),
+        (): Promise<boolean> => this.checkJobRelatedElements(),
+        (): Promise<boolean> => this.checkLinkedInBrandingElements(),
       ];
 
-      for (const selector of linkedinElements) {
-        const element = await this.page.$(selector);
-        if (element) {
-          return true;
-        }
-      }
-
-      // If no navigation found, check for job-related content
-      const jobElements = [
-        '.jobs-search',
-        '.job-details',
-        '.jobs-apply-button',
-      ];
-
-      for (const selector of jobElements) {
-        const element = await this.page.$(selector);
-        if (element) {
+      for (const method of verificationMethods) {
+        const isValid = await method();
+        if (isValid) {
           return true;
         }
       }
 
       return false;
     } catch (error) {
-      this.logger.error('Error verifying LinkedIn page:', error);
+      this.logger.error('Error verifying LinkedIn page:', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
+  }
+
+  /**
+   * Checks for LinkedIn navigation elements
+   */
+  private async checkLinkedInNavigationElements(): Promise<boolean> {
+    const navigationSelectors = [
+      'nav[aria-label="Primary Navigation"]',
+      '.global-nav',
+      '[data-test="nav-logo"]',
+      '.linkedin-logo',
+    ];
+
+    return this.checkAnyElementExists(navigationSelectors);
+  }
+
+  /**
+   * Checks for job-related elements
+   */
+  private async checkJobRelatedElements(): Promise<boolean> {
+    const jobSelectors = [
+      '.jobs-search',
+      '.job-details',
+      '.jobs-apply-button',
+    ];
+
+    return this.checkAnyElementExists(jobSelectors);
+  }
+
+  /**
+   * Checks for LinkedIn branding elements
+   */
+  private async checkLinkedInBrandingElements(): Promise<boolean> {
+    const brandingSelectors = [
+      '[alt*="LinkedIn"]',
+      '.li-logo',
+      '[data-tracking-control-name*="linkedin"]',
+    ];
+
+    return this.checkAnyElementExists(brandingSelectors);
+  }
+
+  /**
+   * Helper method to check if any element from a list exists
+   */
+  private async checkAnyElementExists(selectors: string[]): Promise<boolean> {
+    for (const selector of selectors) {
+      const element = await this.page.$(selector);
+      if (element) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -263,7 +376,7 @@ export class CaptchaHandler {
   private async takeScreenshot(filename: string): Promise<void> {
     try {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const screenshotPath = `screenshots/${filename}-${timestamp}.png`;
+      const screenshotPath = `screenshots/${filename}-${timestamp}.png` as const;
 
       await this.page.screenshot({
         path: screenshotPath,
@@ -272,7 +385,10 @@ export class CaptchaHandler {
 
       this.logger.info(`Screenshot saved: ${screenshotPath}`);
     } catch (error) {
-      this.logger.error('Failed to take screenshot:', error);
+      this.logger.error('Failed to take screenshot:', {
+        error: error instanceof Error ? error.message : String(error),
+        filename,
+      });
     }
   }
 
@@ -280,6 +396,9 @@ export class CaptchaHandler {
    * Displays instructions to the user for manual CAPTCHA resolution
    */
   private displayCaptchaInstructions(): void {
+    const timeoutMinutes = Math.ceil(this.config.timeoutMs / 60000);
+    const checkIntervalSeconds = this.config.checkIntervalMs / 1000;
+
     const instructions = [
       '',
       '🤖 CAPTCHA DETECTED - MANUAL INTERVENTION REQUIRED',
@@ -292,8 +411,8 @@ export class CaptchaHandler {
       '4. Do NOT close the browser window',
       '5. The bot will automatically resume once resolved',
       '',
-      '⏱️  TIMEOUT: 5 minutes',
-      '🔄 The bot checks every 2 seconds for resolution',
+      `⏱️  TIMEOUT: ${timeoutMinutes} minutes`,
+      `🔄 The bot checks every ${checkIntervalSeconds} seconds for resolution`,
       '',
       '❌ If you need to stop the bot, press Ctrl+C',
       '',
@@ -310,6 +429,7 @@ export class CaptchaHandler {
     });
 
     // Also log to console directly for immediate visibility
+    // eslint-disable-next-line no-console
     console.log('\n' + instructions.join('\n') + '\n');
   }
 
@@ -317,7 +437,8 @@ export class CaptchaHandler {
    * Handles CAPTCHA timeout scenarios
    */
   public async handleCaptchaTimeout(): Promise<void> {
-    this.logger.error('CAPTCHA resolution timed out after 5 minutes');
+    const timeoutMinutes = Math.ceil(this.config.timeoutMs / 60000);
+    this.logger.error(`CAPTCHA resolution timed out after ${timeoutMinutes} minutes`);
 
     await this.takeScreenshot('captcha-timeout');
 
@@ -326,7 +447,7 @@ export class CaptchaHandler {
       '⏰ CAPTCHA TIMEOUT',
       '='.repeat(40),
       '',
-      'The CAPTCHA was not resolved within the 5-minute timeout.',
+      `The CAPTCHA was not resolved within the ${timeoutMinutes}-minute timeout.`,
       'The bot will skip this job and continue with the next one.',
       '',
       'If this happens frequently, consider:',
@@ -344,7 +465,10 @@ export class CaptchaHandler {
    * Handles CAPTCHA failure scenarios
    */
   public async handleCaptchaFailure(error: Error): Promise<void> {
-    this.logger.error('CAPTCHA handling failed:', error);
+    this.logger.error('CAPTCHA handling failed:', {
+      error: error.message,
+      stack: error.stack,
+    });
 
     await this.takeScreenshot('captcha-failure');
 

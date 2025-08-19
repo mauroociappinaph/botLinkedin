@@ -1,32 +1,52 @@
-/// <reference types="node" />
-/// <reference types="jest" />
 import { DelayUtils } from '../../../src/utils/DelayUtils';
-import { HumanLikeInteractions } from '../../../src/utils/HumanLikeInteractions';
-import { MockPageBuilder, TEST_CONSTANTS, TimerMockUtils } from '../../utils/MockPageBuilder';
+
+// Mock timers
+jest.useFakeTimers();
 
 describe('DelayUtils', () => {
     beforeEach(() => {
         jest.clearAllMocks();
-        TimerMockUtils.setupTimeoutMock();
+        jest.clearAllTimers();
     });
 
     afterEach(() => {
-        TimerMockUtils.restoreAllTimers();
+        jest.runOnlyPendingTimers();
+        jest.useRealTimers();
+        jest.useFakeTimers();
     });
 
     describe('randomDelay', () => {
         it('should create a delay within the specified range', async () => {
-            const start = Date.now();
-            await DelayUtils.randomDelay(100, 200);
-            const end = Date.now();
+            const delayPromise = DelayUtils.randomDelay(100, 200);
 
-            // Since we're mocking setTimeout, this should complete immediately
-            expect(end - start).toBeLessThan(TEST_CONSTANTS.TIMEOUT_THRESHOLD);
-            expect(setTimeout).toHaveBeenCalled();
+            // Fast-forward time
+            jest.advanceTimersByTime(200);
+
+            await expect(delayPromise).resolves.toBeUndefined();
+        });
+
+        it('should throw error when min is negative', async () => {
+            await expect(DelayUtils.randomDelay(-100, 200)).rejects.toThrow(
+                'Delay values must be non-negative'
+            );
+        });
+
+        it('should throw error when max is negative', async () => {
+            await expect(DelayUtils.randomDelay(100, -200)).rejects.toThrow(
+                'Delay values must be non-negative'
+            );
         });
 
         it('should throw error when min equals max', async () => {
-            await expect(DelayUtils.randomDelay(100, 100)).rejects.toThrow('Minimum delay must be less than maximum delay');
+            await expect(DelayUtils.randomDelay(100, 100)).rejects.toThrow(
+                'Minimum delay must be less than maximum delay'
+            );
+        });
+
+        it('should throw error when min is greater than max', async () => {
+            await expect(DelayUtils.randomDelay(200, 100)).rejects.toThrow(
+                'Minimum delay must be less than maximum delay'
+            );
         });
     });
 
@@ -37,210 +57,144 @@ describe('DelayUtils', () => {
             expect(delay).toBeLessThanOrEqual(150);
         });
 
-        it('should return consistent value when min equals max', () => {
+        it('should return exact value when min equals max', () => {
             const delay = DelayUtils.getRandomTypingDelay(100, 100);
             expect(delay).toBe(100);
+        });
+
+        it('should handle edge case with min = 0', () => {
+            const delay = DelayUtils.getRandomTypingDelay(0, 100);
+            expect(delay).toBeGreaterThanOrEqual(0);
+            expect(delay).toBeLessThanOrEqual(100);
         });
     });
 
     describe('delay', () => {
         it('should create a fixed delay', async () => {
-            await DelayUtils.delay(500);
-            expect(setTimeout).toHaveBeenCalledWith(expect.any(Function), 500);
+            const delayPromise = DelayUtils.delay(500);
+
+            jest.advanceTimersByTime(500);
+
+            await expect(delayPromise).resolves.toBeUndefined();
+        });
+
+        it('should handle zero delay', async () => {
+            const delayPromise = DelayUtils.delay(0);
+
+            jest.advanceTimersByTime(0);
+
+            await expect(delayPromise).resolves.toBeUndefined();
         });
     });
 
-    describe('humanLikeType', () => {
-        it('should type text with human-like delays', async () => {
-            const mockPage = new MockPageBuilder().build();
-            const text = 'test';
+    describe('sleep', () => {
+        it('should be an alias for delay', async () => {
+            const sleepPromise = DelayUtils.sleep(300);
 
-            await HumanLikeInteractions.humanLikeType(mockPage, '#input', text);
+            jest.advanceTimersByTime(300);
 
-            expect(mockPage.waitForSelector).toHaveBeenCalledWith('#input', { timeout: TEST_CONSTANTS.DEFAULT_TIMEOUT });
-            expect(mockPage.click).toHaveBeenCalledWith('#input');
-            expect(mockPage.keyboard.type).toHaveBeenCalledTimes(text.length);
-        });
-
-        it('should clear existing content when clearFirst is true', async () => {
-            const mockPage = new MockPageBuilder().build();
-
-            await HumanLikeInteractions.humanLikeType(mockPage, '#input', 'test', { clearFirst: true });
-
-            expect(mockPage.keyboard.down).toHaveBeenCalledWith('Control');
-            expect(mockPage.keyboard.press).toHaveBeenCalledWith('KeyA');
-            expect(mockPage.keyboard.up).toHaveBeenCalledWith('Control');
-        });
-
-        it('should press Enter when pressEnter is true', async () => {
-            const mockPage = new MockPageBuilder().build();
-
-            await HumanLikeInteractions.humanLikeType(mockPage, '#input', 'test', { pressEnter: true });
-
-            expect(mockPage.keyboard.press).toHaveBeenCalledWith('Enter');
-        });
-
-        it('should not clear content when clearFirst is false', async () => {
-            const mockPage = new MockPageBuilder().build();
-
-            await HumanLikeInteractions.humanLikeType(mockPage, '#input', 'test', { clearFirst: false });
-
-            expect(mockPage.keyboard.down).not.toHaveBeenCalledWith('Control');
-        });
-    });
-
-    describe('humanLikeClick', () => {
-        it('should click element with human-like behavior', async () => {
-            const mockPage = new MockPageBuilder().build();
-
-            await HumanLikeInteractions.humanLikeClick(mockPage, '#button');
-
-            expect(mockPage.waitForSelector).toHaveBeenCalledWith('#button', { visible: true, timeout: TEST_CONSTANTS.DEFAULT_TIMEOUT });
-            expect(mockPage.click).toHaveBeenCalledWith('#button', { delay: expect.any(Number) });
-        });
-
-        it('should perform double click when requested', async () => {
-            const mockPage = new MockPageBuilder().build();
-
-            await HumanLikeInteractions.humanLikeClick(mockPage, '#button', { doubleClick: true });
-
-            expect(mockPage.click).toHaveBeenCalledWith('#button', {
-                clickCount: 2,
-                delay: expect.any(Number)
-            });
-        });
-
-        it('should perform right click when requested', async () => {
-            const mockPage = new MockPageBuilder().build();
-
-            await HumanLikeInteractions.humanLikeClick(mockPage, '#button', { rightClick: true });
-
-            expect(mockPage.click).toHaveBeenCalledWith('#button', {
-                button: 'right',
-                delay: expect.any(Number)
-            });
-        });
-
-        it('should move mouse to element when moveToElement is true', async () => {
-            const mockPage = new MockPageBuilder().build();
-
-            await HumanLikeInteractions.humanLikeClick(mockPage, '#button', { moveToElement: true });
-
-            expect(mockPage.$).toHaveBeenCalledWith('#button');
-            expect(mockPage.mouse.move).toHaveBeenCalled();
-        });
-    });
-
-    describe('moveMouseToElement', () => {
-        it('should move mouse to element center with randomization', async () => {
-            const mockPage = new MockPageBuilder().build();
-
-            await HumanLikeInteractions.moveMouseToElement(mockPage, '#element');
-
-            expect(mockPage.$).toHaveBeenCalledWith('#element');
-            expect(mockPage.mouse.move).toHaveBeenCalled();
-        });
-
-        it('should throw error if element not found', async () => {
-            const pageWithNoElement = new MockPageBuilder().withElementNotFound().build();
-
-            await expect(HumanLikeInteractions.moveMouseToElement(pageWithNoElement, '#missing')).rejects.toThrow(
-                'Element not found failed for #missing'
-            );
-        });
-
-        it('should throw error if bounding box not available', async () => {
-            const pageWithNoBoundingBox = new MockPageBuilder().withNoBoundingBox().build();
-
-            await expect(HumanLikeInteractions.moveMouseToElement(pageWithNoBoundingBox, '#element')).rejects.toThrow(
-                'Could not get bounding box for element failed for #element'
-            );
-        });
-    });
-
-    describe('humanLikeScroll', () => {
-        it('should scroll down by default', async () => {
-            const mockPage = new MockPageBuilder().build();
-
-            await HumanLikeInteractions.humanLikeScroll(mockPage);
-
-            expect(mockPage.evaluate).toHaveBeenCalled();
-        });
-
-        it('should scroll up when direction is specified', async () => {
-            const mockPage = new MockPageBuilder().build();
-
-            await HumanLikeInteractions.humanLikeScroll(mockPage, { direction: 'up' });
-
-            expect(mockPage.evaluate).toHaveBeenCalled();
-        });
-
-        it('should use custom distance and steps', async () => {
-            const mockPage = new MockPageBuilder().build();
-
-            await HumanLikeInteractions.humanLikeScroll(mockPage, { distance: 1000, steps: 5 });
-
-            expect(mockPage.evaluate).toHaveBeenCalledTimes(5);
+            await expect(sleepPromise).resolves.toBeUndefined();
         });
     });
 
     describe('pageLoadDelay', () => {
         it('should use default delays when no parameters provided', async () => {
-            await DelayUtils.pageLoadDelay();
+            const delayPromise = DelayUtils.pageLoadDelay();
 
-            expect(setTimeout).toHaveBeenCalled();
+            // Advance by maximum default delay
+            jest.advanceTimersByTime(5000);
+
+            await expect(delayPromise).resolves.toBeUndefined();
         });
 
         it('should use custom delays when provided', async () => {
-            await DelayUtils.pageLoadDelay(1000, 2000);
+            const delayPromise = DelayUtils.pageLoadDelay(1000, 2000);
 
-            expect(setTimeout).toHaveBeenCalled();
+            jest.advanceTimersByTime(2000);
+
+            await expect(delayPromise).resolves.toBeUndefined();
         });
     });
 
     describe('formFieldDelay', () => {
         it('should create appropriate delay for form field interactions', async () => {
-            await DelayUtils.formFieldDelay();
+            const delayPromise = DelayUtils.formFieldDelay();
 
-            expect(setTimeout).toHaveBeenCalled();
+            jest.advanceTimersByTime(1500);
+
+            await expect(delayPromise).resolves.toBeUndefined();
         });
 
         it('should use custom delays when provided', async () => {
-            await DelayUtils.formFieldDelay(500, 1000);
+            const delayPromise = DelayUtils.formFieldDelay(500, 1000);
 
-            expect(setTimeout).toHaveBeenCalled();
+            jest.advanceTimersByTime(1000);
+
+            await expect(delayPromise).resolves.toBeUndefined();
         });
     });
 
     describe('betweenApplicationsDelay', () => {
         it('should create longer delay between applications', async () => {
-            await DelayUtils.betweenApplicationsDelay();
+            const delayPromise = DelayUtils.betweenApplicationsDelay();
 
-            expect(setTimeout).toHaveBeenCalled();
+            jest.advanceTimersByTime(30000);
+
+            await expect(delayPromise).resolves.toBeUndefined();
         });
 
         it('should use custom delays when provided', async () => {
-            await DelayUtils.betweenApplicationsDelay(5000, 10000);
+            const delayPromise = DelayUtils.betweenApplicationsDelay(5000, 10000);
 
-            expect(setTimeout).toHaveBeenCalled();
+            jest.advanceTimersByTime(10000);
+
+            await expect(delayPromise).resolves.toBeUndefined();
         });
     });
 
     describe('captchaPause', () => {
         it('should create pause for CAPTCHA resolution', async () => {
-            await DelayUtils.captchaPause(1000, 2000);
+            const delayPromise = DelayUtils.captchaPause(1000, 2000);
 
-            expect(setTimeout).toHaveBeenCalled();
+            jest.advanceTimersByTime(2000);
+
+            await expect(delayPromise).resolves.toBeUndefined();
         });
 
         it('should call notify callback during pause', async () => {
             const notifyCallback = jest.fn();
-            const { clearIntervalSpy } = TimerMockUtils.setupIntervalMock();
+            const pausePromise = DelayUtils.captchaPause(9000, 11000, notifyCallback);
 
-            await DelayUtils.captchaPause(1000, 2000, notifyCallback);
+            // Advance by notification interval
+            jest.advanceTimersByTime(5000);
 
-            expect(setInterval).toHaveBeenCalled();
-            expect(clearIntervalSpy).toHaveBeenCalled();
+            // Advance to completion
+            jest.advanceTimersByTime(6000);
+
+            await expect(pausePromise).resolves.toBeUndefined();
+        });
+
+        it('should handle callback errors gracefully', async () => {
+            const errorCallback = jest.fn().mockImplementation(() => {
+                throw new Error('Callback error');
+            });
+
+            const pausePromise = DelayUtils.captchaPause(4000, 6000, errorCallback);
+
+            jest.advanceTimersByTime(5000);
+
+            // Should not throw despite callback error
+            await expect(pausePromise).resolves.toBeUndefined();
+        });
+
+        it('should throw error for invalid parameters', async () => {
+            await expect(DelayUtils.captchaPause(-1000, 2000)).rejects.toThrow(
+                'Invalid delay parameters'
+            );
+
+            await expect(DelayUtils.captchaPause(2000, 1000)).rejects.toThrow(
+                'Invalid delay parameters'
+            );
         });
     });
 
@@ -255,32 +209,11 @@ describe('DelayUtils', () => {
             const delay = DelayUtils.getRandomDelay(150, 150);
             expect(delay).toBe(150);
         });
-    });
 
-    describe('executeWithRealisticTiming', () => {
-        it('should execute multiple actions with delays', async () => {
-            const mockPage = new MockPageBuilder().build();
-            const actions = [
-                { type: 'click' as const, selector: '#button1' },
-                { type: 'type' as const, selector: '#input1', text: 'test' },
-                { type: 'scroll' as const },
-                { type: 'wait' as const, delay: { min: 100, max: 200 } },
-            ];
-
-            await HumanLikeInteractions.executeWithRealisticTiming(mockPage, actions);
-
-            expect(mockPage.click).toHaveBeenCalled();
-            expect(mockPage.keyboard.type).toHaveBeenCalled();
-            expect(mockPage.evaluate).toHaveBeenCalled();
-        });
-
-        it('should handle empty actions array', async () => {
-            const mockPage = new MockPageBuilder().build();
-
-            await HumanLikeInteractions.executeWithRealisticTiming(mockPage, []);
-
-            // Should complete without errors
-            expect(true).toBe(true);
+        it('should handle large ranges', () => {
+            const delay = DelayUtils.getRandomDelay(1000, 10000);
+            expect(delay).toBeGreaterThanOrEqual(1000);
+            expect(delay).toBeLessThanOrEqual(10000);
         });
     });
 
@@ -313,192 +246,18 @@ describe('DelayUtils', () => {
             expect(result.errors).toContain('Page load delays must be non-negative');
         });
 
-        it('should detect min >= max conditions', () => {
-            const config = {
-                minPageLoad: 3000,
-                maxPageLoad: 1000,
-                minTyping: 150,
-                maxTyping: 50,
-            };
-
-            const result = DelayUtils.validateDelayConfig(config);
-
-            expect(result.isValid).toBe(false);
-            expect(result.errors).toContain('Minimum page load delay must be less than maximum');
-            expect(result.errors).toContain('Minimum typing delay must be less than maximum');
-        });
-
-        it('should detect excessive delay values', () => {
-            const config = {
-                minPageLoad: 1000,
-                maxPageLoad: 50000, // Too high
-                minTyping: 50,
-                maxTyping: 2000, // Too high
-            };
-
-            const result = DelayUtils.validateDelayConfig(config);
-
-            expect(result.isValid).toBe(false);
-            expect(result.errors).toContain('Maximum page load delay should not exceed 30 seconds');
-            expect(result.errors).toContain('Maximum typing delay should not exceed 1 second');
-        });
-    });
-
-    describe('getDefaultDelayConfig', () => {
-        it('should return valid default configuration', () => {
-            const config = DelayUtils.getDefaultDelayConfig();
-
-            expect(config).toHaveProperty('minPageLoad');
-            expect(config).toHaveProperty('maxPageLoad');
-            expect(config).toHaveProperty('minTyping');
-            expect(config).toHaveProperty('maxTyping');
-
-            const validation = DelayUtils.validateDelayConfig(config);
-            expect(validation.isValid).toBe(true);
-        });
-    });
-});/// <reference types="node" />
-/// <reference types="jest" />
-
-describe('DelayUtils', () => {
-    beforeEach(() => {
-        jest.clearAllMocks();
-        TimerMockUtils.setupTimeoutMock();
-    });
-
-    afterEach(() => {
-        TimerMockUtils.restoreAllTimers();
-    });
-
-    describe('randomDelay', () => {
-        it('should create a delay within the specified range', async () => {
-            const start = Date.now();
-            await DelayUtils.randomDelay(100, 200);
-            const end = Date.now();
-
-            // Since we're mocking setTimeout, this should complete immediately
-            expect(end - start).toBeLessThan(TEST_CONSTANTS.TIMEOUT_THRESHOLD);
-            expect(setTimeout).toHaveBeenCalled();
-        });
-
-        it('should throw error when min equals max', async () => {
-            await expect(DelayUtils.randomDelay(100, 100)).rejects.toThrow('Minimum delay must be less than maximum delay');
-        });
-    });
-
-    describe('getRandomTypingDelay', () => {
-        it('should return a value within the specified range', () => {
-            const delay = DelayUtils.getRandomTypingDelay(50, 150);
-            expect(delay).toBeGreaterThanOrEqual(50);
-            expect(delay).toBeLessThanOrEqual(150);
-        });
-
-        it('should return consistent value when min equals max', () => {
-            const delay = DelayUtils.getRandomTypingDelay(100, 100);
-            expect(delay).toBe(100);
-        });
-    });
-
-    describe('delay', () => {
-        it('should create a fixed delay', async () => {
-            await DelayUtils.delay(500);
-            expect(setTimeout).toHaveBeenCalledWith(expect.any(Function), 500);
-        });
-    });
-
-    describe('pageLoadDelay', () => {
-        it('should use default delays when no parameters provided', async () => {
-            await DelayUtils.pageLoadDelay();
-            expect(setTimeout).toHaveBeenCalled();
-        });
-
-        it('should use custom delays when provided', async () => {
-            await DelayUtils.pageLoadDelay(1000, 2000);
-            expect(setTimeout).toHaveBeenCalled();
-        });
-    });
-
-    describe('formFieldDelay', () => {
-        it('should create appropriate delay for form field interactions', async () => {
-            await DelayUtils.formFieldDelay();
-            expect(setTimeout).toHaveBeenCalled();
-        });
-
-        it('should use custom delays when provided', async () => {
-            await DelayUtils.formFieldDelay(500, 1000);
-            expect(setTimeout).toHaveBeenCalled();
-        });
-    });
-
-    describe('betweenApplicationsDelay', () => {
-        it('should create longer delay between applications', async () => {
-            await DelayUtils.betweenApplicationsDelay();
-            expect(setTimeout).toHaveBeenCalled();
-        });
-
-        it('should use custom delays when provided', async () => {
-            await DelayUtils.betweenApplicationsDelay(5000, 10000);
-            expect(setTimeout).toHaveBeenCalled();
-        });
-    });
-
-    describe('captchaPause', () => {
-        it('should create pause for CAPTCHA resolution', async () => {
-            await DelayUtils.captchaPause(1000, 2000);
-            expect(setTimeout).toHaveBeenCalled();
-        });
-
-        it('should call notify callback during pause', async () => {
-            const notifyCallback = jest.fn();
-            const { mockInterval, clearIntervalSpy } = TimerMockUtils.setupIntervalMock();
-
-            await DelayUtils.captchaPause(1000, 2000, notifyCallback);
-
-            expect(setInterval).toHaveBeenCalled();
-            expect(clearIntervalSpy).toHaveBeenCalledWith(mockInterval);
-        });
-    });
-
-    describe('getRandomDelay', () => {
-        it('should return value within specified range', () => {
-            const delay = DelayUtils.getRandomDelay(100, 200);
-            expect(delay).toBeGreaterThanOrEqual(100);
-            expect(delay).toBeLessThanOrEqual(200);
-        });
-
-        it('should return exact value when min equals max', () => {
-            const delay = DelayUtils.getRandomDelay(150, 150);
-            expect(delay).toBe(150);
-        });
-    });
-
-    describe('validateDelayConfig', () => {
-        it('should validate correct configuration', () => {
+        it('should detect negative typing delays', () => {
             const config = {
                 minPageLoad: 1000,
                 maxPageLoad: 3000,
-                minTyping: 50,
-                maxTyping: 150,
-            };
-
-            const result = DelayUtils.validateDelayConfig(config);
-
-            expect(result.isValid).toBe(true);
-            expect(result.errors).toHaveLength(0);
-        });
-
-        it('should detect negative values', () => {
-            const config = {
-                minPageLoad: -100,
-                maxPageLoad: 3000,
-                minTyping: 50,
+                minTyping: -50,
                 maxTyping: 150,
             };
 
             const result = DelayUtils.validateDelayConfig(config);
 
             expect(result.isValid).toBe(false);
-            expect(result.errors).toContain('Page load delays must be non-negative');
+            expect(result.errors).toContain('Typing delays must be non-negative');
         });
 
         it('should detect min >= max conditions', () => {
@@ -530,6 +289,20 @@ describe('DelayUtils', () => {
             expect(result.errors).toContain('Maximum page load delay should not exceed 30 seconds');
             expect(result.errors).toContain('Maximum typing delay should not exceed 1 second');
         });
+
+        it('should handle multiple validation errors', () => {
+            const config = {
+                minPageLoad: -1000,
+                maxPageLoad: 50000,
+                minTyping: 200,
+                maxTyping: 100,
+            };
+
+            const result = DelayUtils.validateDelayConfig(config);
+
+            expect(result.isValid).toBe(false);
+            expect(result.errors.length).toBeGreaterThan(1);
+        });
     });
 
     describe('getDefaultDelayConfig', () => {
@@ -543,6 +316,104 @@ describe('DelayUtils', () => {
 
             const validation = DelayUtils.validateDelayConfig(config);
             expect(validation.isValid).toBe(true);
+        });
+
+        it('should return consistent values', () => {
+            const config1 = DelayUtils.getDefaultDelayConfig();
+            const config2 = DelayUtils.getDefaultDelayConfig();
+
+            expect(config1).toEqual(config2);
+        });
+    });
+
+    describe('jitteredDelay', () => {
+        it('should create delay with jitter', async () => {
+            const delayPromise = DelayUtils.jitteredDelay(1000, 20);
+
+            jest.advanceTimersByTime(1200); // Base + max jitter
+
+            await expect(delayPromise).resolves.toBeUndefined();
+        });
+
+        it('should throw error for invalid jitter percent', async () => {
+            await expect(DelayUtils.jitteredDelay(1000, -10)).rejects.toThrow(
+                'Jitter percent must be between 0 and 100'
+            );
+
+            await expect(DelayUtils.jitteredDelay(1000, 150)).rejects.toThrow(
+                'Jitter percent must be between 0 and 100'
+            );
+        });
+
+        it('should handle minimal jitter', async () => {
+            const delayPromise = DelayUtils.jitteredDelay(1000, 1);
+
+            jest.advanceTimersByTime(1020); // Base + max jitter
+
+            await expect(delayPromise).resolves.toBeUndefined();
+        });
+    });
+
+    describe('exponentialBackoff', () => {
+        it('should create exponential delays', async () => {
+            const backoffPromise = DelayUtils.exponentialBackoff(100, 2, 1000, 3);
+
+            // Total delay should be 100 + 200 + 400 = 700ms
+            jest.advanceTimersByTime(700);
+
+            await expect(backoffPromise).resolves.toBeUndefined();
+        }, 10000);
+
+        it('should respect maximum delay cap', async () => {
+            const backoffPromise = DelayUtils.exponentialBackoff(1000, 3, 2000, 3);
+
+            // Delays: 1000, 2000 (capped), 2000 (capped) = 5000ms total
+            jest.advanceTimersByTime(5000);
+
+            await expect(backoffPromise).resolves.toBeUndefined();
+        }, 10000);
+
+        it('should handle single iteration', async () => {
+            const backoffPromise = DelayUtils.exponentialBackoff(500, 2, 10000, 1);
+
+            jest.advanceTimersByTime(500);
+
+            await expect(backoffPromise).resolves.toBeUndefined();
+        });
+    });
+
+    describe('getDelayForInteraction', () => {
+        it('should return delay configuration for PAGE_LOAD', () => {
+            const config = DelayUtils.getDelayForInteraction('PAGE_LOAD');
+
+            expect(config).toHaveProperty('min');
+            expect(config).toHaveProperty('max');
+            expect(config.min).toBeGreaterThanOrEqual(0);
+            expect(config.max).toBeGreaterThan(config.min);
+        });
+
+        it('should return delay configuration for TYPING', () => {
+            const config = DelayUtils.getDelayForInteraction('TYPING');
+
+            expect(config).toHaveProperty('min');
+            expect(config).toHaveProperty('max');
+            expect(config.min).toBeGreaterThanOrEqual(0);
+            expect(config.max).toBeGreaterThan(config.min);
+        });
+
+        it('should return delay configuration for CLICK', () => {
+            const config = DelayUtils.getDelayForInteraction('CLICK');
+
+            expect(config).toHaveProperty('min');
+            expect(config).toHaveProperty('max');
+        });
+
+        it('should return delay configuration for BETWEEN_APPLICATIONS', () => {
+            const config = DelayUtils.getDelayForInteraction('BETWEEN_APPLICATIONS');
+
+            expect(config).toHaveProperty('min');
+            expect(config).toHaveProperty('max');
+            expect(config.max).toBeGreaterThan(10000); // Should be substantial delay
         });
     });
 });

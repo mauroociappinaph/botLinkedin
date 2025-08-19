@@ -3,10 +3,16 @@
   "version": "1.0.0",
   "description": "LinkedIn job application automation bot with TypeScript and Puppeteer",
   "main": "dist/index.js",
+  "bin": {
+    "linkedin-job-bot": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "nodemon src/index.ts",
     "start": "node dist/index.js",
+    "bot": "npm run build && npm start",
+    "bot:dev": "ts-node src/index.ts",
+    "bot:config": "ts-node src/index.ts --help",
     "test": "jest --passWithNoTests",
     "test:integration": "jest --config jest.integration.config.js",
     "test:coverage": "jest --coverage --passWithNoTests",

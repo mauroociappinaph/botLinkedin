@@ -98,7 +98,7 @@ export class SessionMonitor {
   private alertConfig: AlertConfig;
   private performanceHistory: PerformanceMetrics[] = [];
   private maxHistorySize = 100;
-  private monitoringInterval?: ReturnType<typeof setInterval>;
+  private monitoringInterval?: ReturnType<typeof setInterval> | undefined;
   private alerts: Alert[] = [];
 
   constructor(logger: Logger, alertConfig: AlertConfig = {}) {

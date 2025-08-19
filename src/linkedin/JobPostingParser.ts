@@ -222,7 +222,7 @@ export class JobPostingParser {
     }, titleElement);
 
     const url = await this.page.evaluate((el) => {
-      return el.href || '';
+      return (el as HTMLAnchorElement).href || '';
     }, titleElement);
 
     // Extract job ID from URL (requirement 1.2)
@@ -420,7 +420,7 @@ export class JobPostingParser {
 
       const description = await this.page.evaluate((el) => {
         // Get text content and clean it up
-        const text = el.textContent || el.innerText || '';
+        const text = el.textContent || (el as HTMLElement).innerText || '';
         return text.trim().replace(/\s+/g, ' ');
       }, descriptionElement);
 

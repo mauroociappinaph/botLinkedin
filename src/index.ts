@@ -1,19 +1,28 @@
 // Main entry point for LinkedIn Job Bot
-// This will be implemented in later tasks
+import { LinkedInBotCLI } from './cli';
 
+// Export all modules for library usage
 export * from './browser';
+export * from './cli';
 export * from './config';
 export * from './database';
 export * from './linkedin';
 export * from './types';
 export * from './utils';
 
-// Main function will be implemented in task 11.2
+/**
+ * Main entry point function
+ * Implements Requirements: 9.2, 7.3, 7.4
+ */
 async function main(): Promise<void> {
-  console.log('LinkedIn Job Bot - Entry point created');
-  console.log('Implementation will be completed in subsequent tasks');
+  const cli = new LinkedInBotCLI();
+  await cli.run();
 }
 
+// Execute CLI if this file is run directly
 if (require.main === module) {
-  main().catch(console.error);
+  main().catch((error) => {
+    console.error('Fatal error:', error);
+    process.exit(1);
+  });
 }
